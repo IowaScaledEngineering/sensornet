@@ -1,0 +1,449 @@
+# *************************************************************************
+# Title:    MRBus/MRBee to Home Sensor Network Bridge 
+# Authors:  Nathan D. Holmes <maverick@drgw.net>
+#           Michael D. Petersen <railfan@drgw.net>
+# File:     sensorbridge-mrbus.py
+# License:  GNU General Public License v3
+#
+# LICENSE:
+#   Copyright (C) 2019 Nathan Holmes & Michael Petersen
+#    
+#   This program is free software; you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation; either version 3 of the License, or
+#   any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+# DESCRIPTION:
+#
+#*************************************************************************
+
+import sys
+import time
+import traceback
+import socket
+import argparse
+import configparser
+import re
+import struct
+from simpleeval import simple_eval
+import mrbus
+import datetime
+import paho.mqtt.client as mqtt
+import json
+import logging
+
+try:
+   import serial.tools.list_ports
+except ImportError:
+   raise ImportError('serial.tools.list_ports is missing - you probably need to use pip to install serial and pySerial')
+
+def findXbeePort():
+   """This looks for the first USB serial port with an FTDI bridge chip.  In the RasPi embedded esu-bridge, this will always be the XBee."""
+   ports = list(serial.tools.list_ports.grep("ttyUSB"))
+   for p in ports:
+      if "FTDI" == p.manufacturer:
+         return p.device
+   return None
+
+def mqtt_onConnect(client, userdata, flags, rc):
+   if rc == 0:
+      # Successful Connection
+      print("Successful MQTT Connection")
+      client.connected_flag = True
+   elif rc == 1:
+      print("ERROR: MQTT Incorrect Protocol Version")
+      client.connected_flag = False
+   elif rc == 2:
+      print("ERROR: MQTT Invalid Client ID")
+      client.connected_flag = False
+   elif rc == 3:
+      print("ERROR: MQTT Broker Unavailable")
+      client.connected_flag = False
+   elif rc == 4:
+      print("ERROR: MQTT Bad Username/Password")
+      client.connected_flag = False
+   elif rc == 5:
+      print("ERROR: MQTT Not Authorized")
+      client.connected_flag = False
+   else:
+      print("ERROR: MQTT Other Failure %d" % (rc))
+      client.connected_flag = False
+
+def mqtt_onDisconnect(client, userdata, rc):
+   print("MQTT disconnected - reason: [%s]" % (str(rc)))
+   client.connected_flag = False
+
+def getMillis():
+   return time.time() * 1000.0
+
+# This only works in python3 for some reason
+def float_from_unsigned16(n):
+  assert 0 <= n < 2**16
+  s = n >> 15
+  e = (n & 0x7c00) >> 10
+  m = n & 0x03FF
+
+  if e == 0:
+    if m == 0:
+      return -0.0 if s else 0.0
+    else:
+      return (-1)**s * m / 2**10 * 2**(-14)  # subnormal
+
+  elif e == 31:
+    if m == 0:
+      return float('-inf') if s else float('inf')
+    else:
+      return float('nan')
+
+  return (-1)**s * (1 + m / 2**10) * 2**(e - 15)
+
+class globalConfiguration:
+   sensors = None
+   configOpts = None
+
+   def __init__(self):
+      self.sensors = { }
+      self.configOpts = { }
+
+   def parserGetWithDefault(self, parser, section, key, defaultValue):
+      try:
+         value = parser.get(section, key)
+         if value is None:
+            value = defaultValue
+      except:
+         value = defaultValue
+
+      return value
+
+   def parserGetIntWithDefault(self, parser, section, key, defaultValue):
+      try:
+         value = parser.getint(section, key)
+         if value is None:
+            value = defaultValue
+      except:
+         value = defaultValue
+
+      return value
+
+
+   def loadConfiguration(self, confFilename):
+      # Reinitialize
+      self. __init__()
+      
+      print("Reading configuration file [%s]" % (confFilename))
+      parser = configparser.SafeConfigParser()
+      parser.read(confFilename)
+      print("Configuration file successfully read")
+
+      # Get global options
+      baseAddrStr = self.parserGetWithDefault(parser, "global", "baseAddress", "0xFE")
+      self.configOpts['baseAddress'] = int(baseAddrStr, 16)
+      self.configOpts['sourceName'] = self.parserGetWithDefault(parser, "global", "sourceName", "mrbw-sensorbridge")
+      self.configOpts['locale'] = self.parserGetWithDefault(parser, "global", "locale", "house")
+      self.configOpts['mqttBroker'] = self.parserGetWithDefault(parser, "global", "mqttServer", "localhost")
+      self.configOpts['mqttPort'] = self.parserGetIntWithDefault(parser, "global", "mqttPort", 1883)
+      self.configOpts['mqttUsername'] = self.parserGetWithDefault(parser, "global", "mqttUsername", None)
+      self.configOpts['mqttPassword'] = self.parserGetWithDefault(parser, "global", "mqttPassword", None)
+      self.configOpts['mqttReconnectInterval'] = self.parserGetIntWithDefault(parser, "global", "mqttReconnectInterval", 10)
+      self.configOpts['mrbusPort'] = self.parserGetWithDefault(parser, "global", "mrbusPort", None)
+      self.configOpts['mrbusInterfaceType'] = self.parserGetWithDefault(parser, "global", "mrbusInterface", "mrbee")
+
+      # Get sensors
+      sections = parser.sections()
+      REsensor = re.compile("(?P<type>[a-zA-Z0-9]+):(?P<sensorName>[a-zA-Z0-9_/]+)")
+      for section in sections:
+         print("Getting sensors from configuration")
+         match = REsensor.match(section)
+      
+         if match is None:
+            print("Ignoring section [%s]" % (section))
+         elif match.groupdict()['type'] == 'sensor':
+            print("Found sensor named [%s]" % (match.groupdict()['sensorName']))
+            sensorName = match.groupdict()['sensorName']
+            sensorAddress = 0x00
+            try:
+               sensorAddress =  int(parser.get(section, "srcAddr"), 16)
+            except:
+               print("Bad sensor address for [%s], skipping" % (section))
+               continue
+
+            try:
+               sensorPktType =  parser.get(section, "pktType")
+            
+               if len(sensorPktType) == 1:
+                  # Single character
+                  sensorPktType = ord(sensorPktType)
+               else:
+                  sensorPktType = int(sensorPktType, 16)
+               
+            except Exception as e:
+               print("Bad sensor packet type for [%s], skipping" % (section))
+               print(e)
+               continue
+
+            try:
+               sensorDataType =  parser.get(section, "dataType")
+               sensorDataStart = parser.get(section, "dataStart")
+            except:
+               print("Bad sensor data type for [%s], skipping" % (section))
+               continue
+
+
+            try:
+               evalFunc =  parser.get(section, "evalFunc")
+               # FIXME: Sanitize formatting string here
+            except:
+               evalFunc = None
+         
+            try:
+               dataFormat = parser.get(section, "dataFormat")
+            except:
+               dataFormat = None
+
+            try:
+               dataUnits = parser.get(section, "dataUnits")
+            except:
+               dataUnits = None
+
+            sensor = { 'name':sensorName, 'sensorAddress':sensorAddress, 'sensorPktType': sensorPktType, 'dataType':sensorDataType, 'dataStart':sensorDataStart, 'evalFunc':evalFunc, 'dataFormat':dataFormat, 'dataUnits': dataUnits }
+
+            if sensorAddress not in self.sensors:
+               self.sensors[sensorAddress] = [ ] # Create empty list of sensors for this address
+         
+            self.sensors[sensorAddress].append(sensor)
+            
+      print(self.sensors)
+
+def main(configFile, serialPort):
+   mrbee = None
+   gConf = globalConfiguration();
+   gConf.loadConfiguration(configFile)
+
+   mqtt.Client.connected_flag = False
+   mqttClient = mqtt.Client()
+   mqttClient.on_connect=mqtt_onConnect
+   mqttClient.on_disconnect=mqtt_onDisconnect
+
+   # Initialization
+
+   lastPacket = getMillis() - 1000.0
+   lastConnectAttempt = None
+
+   print("-----------------------------------------------")
+   print(" STARTING RUN PHASE")
+   print("")
+   
+   # Main Run Loop - runs until something weird happens
+   while True:
+      
+      # Initialize MRBus / MRBee client if necessary
+      if mrbee is None:
+         try:
+            # If it didn't come as an argument, get it from the configuration file
+            if serialPort is None or len(serialPort) == 0:
+               serialPort = gConf.configOpts['mrbusPort']
+            # If we didn't get the port from either of those, search for an FTDI bridge
+            #   part using findXbeePort()
+            if serialPort is None:
+               serialPort = findXbeePort()
+
+            if serialPort is None:
+               print("No XBee/MRBus interface found, waiting and retrying...")
+               time.sleep(2)
+               continue
+
+            if gConf.configOpts['mrbusInterfaceType'] == 'mrbee':
+               mrbusInterfaceType = 'mrbee'
+            else:
+               mrbusInterfaceType = 'unknown'
+
+            print("Trying interface [%s] on serial port [%s]" % (mrbusInterfaceType, serialPort))
+            mrbee = mrbus.mrbus(serialPort, gConf.configOpts['baseAddress'], logall=True, logfile=sys.stdout, busType=mrbusInterfaceType)
+            mrbee.setXbeeLED('D9', True);
+           
+         except(KeyboardInterrupt):
+            raise
+         except Exception as e:
+            if mrbee is not None:
+               mrbee.disconnect()
+            mrbee = None
+            print("Exception in starting MRBus interface");
+            print(e)
+            time.sleep(2)
+            continue # Restart running loop - no point bringing this thing up if we have no mrbus interface
+         
+      # Reconnect MQTT client if necessary
+
+      if mqttClient.connected_flag is False and (lastConnectAttempt is None or lastConnectAttempt + gConf.configOpts['mqttReconnectInterval'] < time.time()):
+         # We don't have an MQTT client and need to try reconnecting
+         try:
+            lastConnectAttempt = time.time()
+            mqttClient.loop_start()
+            mqttClient.connect(gConf.configOpts['mqttBroker'], gConf.configOpts['mqttPort'], keepalive=60)
+            while not mqttClient.connected_flag: 
+               time.sleep(2) # Wait for callback to fire
+            mqttClient.loop_stop()
+            if mqttClient.connected_flag is True:
+               mrbee.setXbeeLED('D8', True);
+         except(KeyboardInterrupt):
+            raise
+         except:
+            mqttClient.connected_flag = False
+            mrbee.setXbeeLED('D8', False);
+
+      try:
+         # Start allowing MQTT callbacks
+         mqttClient.loop_start()
+         pkt = mrbee.getpkt()
+
+         if getMillis() + 100.0 > lastPacket and mrbee.getXbeeLED('D7') is True:
+            mrbee.setXbeeLED('D7', False);
+
+         
+         if pkt is None:
+            time.sleep(0.01)
+            continue
+         
+         lastPacket = getMillis()
+         mrbee.setXbeeLED('D7', True);
+         
+         print(pkt)
+         
+         if mqttClient.connected_flag is False:
+            print("Skipping packet processing - no MQTT broker connected")
+            continue
+         
+         updateTime = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc).isoformat()
+
+         if pkt.src in gConf.sensors:
+            for sensor in gConf.sensors[pkt.src]:
+               if sensor['sensorPktType'] is not pkt.cmd:
+                  continue
+               
+               topic = "%s/%s" % (gConf.configOpts['locale'], sensor['name'])
+
+               dataType = sensor['dataType']
+               try:
+                  dataStart = int(sensor['dataStart'])
+               except:
+                  dataStart = 0
+               
+               if dataType == 'uint8':
+                  if dataStart >= len(pkt.data):
+                     print("dataStart exceeds packet length")
+                     continue
+                  d = pkt.data[dataStart]
+               elif dataType == 'uint16':
+                  if dataStart+1 >= len(pkt.data):
+                     print("dataStart exceeds packet length")
+                     continue
+                  d = pkt.data[dataStart] * 256 + pkt.data[dataStart+1]
+               elif dataType == 'uint24':
+                  if dataStart+2 >= len(pkt.data):
+                     print("dataStart exceeds packet length")
+                     continue
+                  d = pkt.data[dataStart] * 256 * 256 + pkt.data[dataStart+1] * 256 + pkt.data[dataStart+2]
+               elif dataType == 'uint32':
+                  if dataStart+3 >= len(pkt.data):
+                     print("dataStart exceeds packet length")
+                     continue
+                  d = pkt.data[dataStart] * 256 * 256 * 256 + pkt.data[dataStart+1] * 256 * 256 + pkt.data[dataStart+2] * 256 + pkt.data[dataStart+3]
+               elif dataType == 'float16':
+                  if dataStart+1 >= len(pkt.data):
+                     print("dataStart exceeds packet length")
+                     continue
+                  f16Temp = pkt.data[dataStart] * 256 + pkt.data[dataStart+1]
+                  d = float_from_unsigned16(f16Temp)
+
+               if sensor['evalFunc'] is not None:
+                  try:
+                     varNames = {'d':d, 'data':pkt.data }
+                     func = sensor['evalFunc']
+                     value = simple_eval(func, names=varNames)
+                  except:
+                     value = d
+               else:
+                  value = d
+                  
+               if sensor['dataFormat'] is not None:
+                  dataFormat = sensor['dataFormat']
+               else:
+                  if isinstance(value, int):
+                     dataFormat = '%u'
+                  elif isinstance(value, float):
+                     dataFormat = '%.1f'
+                  elif isinstance(value, string):
+                     dataFormat = '%s'
+                  else:
+                     dataFormat = '%u'
+
+               try:
+                  displayValue = dataFormat % (value)
+                  print("Publishing [%s] to topic [%s]" % (displayValue, topic))
+
+                  updateMessage = {
+                     'type':'update',
+                     'value':displayValue,
+                     'time':updateTime,
+                     'source':gConf.configOpts['sourceName']
+                  }
+
+                  if sensor['dataUnits'] is not None:
+                     updateMessage['units'] = sensor['dataUnits']
+                  message = json.dumps(updateMessage, sort_keys=True)
+
+
+                  if mqttClient.connected_flag is True:
+                     mqttClient.publish(topic=topic, payload=message)
+
+               except Exception as e:
+                  print("Something went wrong")
+                  print(e)
+                  continue
+                  
+
+      except (KeyboardInterrupt):
+         print("User requested program termination, exiting...")
+         try:
+            if mrbee is not None:
+               mrbee.disconnect()
+         except:
+            pass
+
+         try:
+            if mqttClient is not None and mqttClient.connected_flag is True:
+               mqttClient.disconnect()
+         except:
+            pass
+
+         sys.exit()
+
+      except Exception as e:
+         print("Caught some sort of exception, restarting the whole thing")
+         print(e)
+         exc_info = sys.exc_info()
+         traceback.print_exception(*exc_info)
+         del exc_info         
+
+         try:
+            mrbee.disconnect()
+            mrbee = None
+         except:
+            pass
+            
+         break
+
+if __name__ == '__main__':
+   ap = argparse.ArgumentParser()
+   ap.add_argument("-s", "--serial", help="specify serial device for XBee radio", type=str, default=None)
+   ap.add_argument("-c", "--config", help="specify file with configuration", type=str)
+   ap.set_defaults(config="sensorbridge-mrbus.cfg")
+   args = ap.parse_args()
+
+   main(args.config, args.serial)
+
