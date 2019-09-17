@@ -232,7 +232,7 @@ def main(configFile, serialPort):
    # Initialization
 
    lastPacket = getMillis() - 1000.0
-   lastConnectAttempt = None
+   lastMQTTConnectAttempt = None
 
    print("-----------------------------------------------")
    print(" STARTING RUN PHASE")
@@ -279,10 +279,10 @@ def main(configFile, serialPort):
          
       # Reconnect MQTT client if necessary
 
-      if mqttClient.connected_flag is False and (lastConnectAttempt is None or lastConnectAttempt + gConf.configOpts['mqttReconnectInterval'] < time.time()):
+      if mqttClient.connected_flag is False and (lastMQTTConnectAttempt is None or lastMQTTConnectAttempt + gConf.configOpts['mqttReconnectInterval'] < time.time()):
          # We don't have an MQTT client and need to try reconnecting
          try:
-            lastConnectAttempt = time.time()
+            lastMQTTConnectAttempt = time.time()
             mqttClient.loop_start()
             mqttClient.connect(gConf.configOpts['mqttBroker'], gConf.configOpts['mqttPort'], keepalive=60)
             while not mqttClient.connected_flag: 
