@@ -43,6 +43,7 @@ import threading
 import SensorStatus
 import json
 import iso8601
+import pytz
 
 # TO DO
 # - Age out nodes that haven't been filled lately
@@ -96,11 +97,21 @@ class ws_gethistory:
     
     if path in sensorStatus.sensorNodeTree:
       for entry in sensorStatus.sensorNodeTree[path]:
+        
+        timeDT = datetime.datetime.fromtimestamp(entry['time']).replace(tzinfo=datetime.timezone.utc)
+        localTimeDT = timeDT
+        
+        if 'tz' in args:
+          try:
+            zone = pytz.timezone(args['tz'])
+            localTimeDT = timeDT.astimezone(zone)
+          except:
+            localTimeDT = timeDT.astimezone(datetime.timezone.utc)
+       
         if 'format' in args:
-          timeVal = time.gmtime(entry['time'])
-          timeStr = time.strftime(args['format'], timeVal)
+          timeStr = localTimeDT.strftime(args['format'])
         else:
-          timeStr = datetime.datetime.fromtimestamp(entry['time']).replace(tzinfo=datetime.timezone.utc).isoformat()
+          timeStr = localTimeDT.isoformat()
 
         output += "%s,%s\n" % (timeStr, entry['value'])
     else:
