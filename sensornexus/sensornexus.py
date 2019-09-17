@@ -277,6 +277,9 @@ def main(configFile):
   mqttClient.on_connect=mqtt_onConnect
   mqttClient.on_disconnect=mqtt_onDisconnect
   mqttClient.on_message = mqtt_onMessage
+  if gConf.configOpts['mqttUsername'] is not None and gConf.configOpts['mqttPassword'] is not None:
+    mqttClient.username_pw_set(username=gConf.configOpts['mqttUsername'], password=gConf.configOpts['mqttPassword'])
+  
 
   thread.start_new_thread(runWebserver, (httpserver, app, ('0.0.0.0', 8082)))
   print("Webserver started")

@@ -228,6 +228,8 @@ def main(configFile, serialPort):
    mqttClient = mqtt.Client()
    mqttClient.on_connect=mqtt_onConnect
    mqttClient.on_disconnect=mqtt_onDisconnect
+   if gConf.configOpts['mqttUsername'] is not None and gConf.configOpts['mqttPassword'] is not None:
+      mqttClient.username_pw_set(username=gConf.configOpts['mqttUsername'], password=gConf.configOpts['mqttPassword'])
 
    # Initialization
 
