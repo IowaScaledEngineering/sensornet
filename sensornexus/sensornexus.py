@@ -32,6 +32,8 @@ import re
 import struct
 from simpleeval import simple_eval
 import datetime
+import pickle
+
 try:
   import web
 except ImportError:
@@ -44,6 +46,9 @@ import SensorStatus
 import json
 import iso8601
 import pytz
+
+import atexit
+
 
 # TO DO
 # - Age out nodes that haven't been filled lately
@@ -98,16 +103,19 @@ class ws_gethistory:
     if path in sensorStatus.sensorNodeTree:
       for entry in sensorStatus.sensorNodeTree[path]:
         
+        # All timestamps, as stored, are in UTC.  Make sure we read it and put UTC as the timezone
         timeDT = datetime.datetime.fromtimestamp(entry['time']).replace(tzinfo=datetime.timezone.utc)
-        localTimeDT = timeDT
         
         if 'tz' in args:
           try:
             zone = pytz.timezone(args['tz'])
-            localTimeDT = timeDT.astimezone(zone)
+            newLocalTimeDT = timeDT.astimezone(zone)
+            localTimeDT = newLocalTimeDT
           except:
-            localTimeDT = timeDT.astimezone(datetime.timezone.utc)
-       
+            pass
+        else:
+          localTimeDT = timeDT.astimezone(sensorStatus.defaultTimezone)
+
         if 'format' in args:
           timeStr = localTimeDT.strftime(args['format'])
         else:
@@ -206,7 +214,24 @@ class GlobalConfiguration:
     self.configOpts['mqttUsername'] = self.parserGetWithDefault(parser, "global", "mqttUsername", None)
     self.configOpts['mqttPassword'] = self.parserGetWithDefault(parser, "global", "mqttPassword", None)
     self.configOpts['mqttReconnectInterval'] = self.parserGetIntWithDefault(parser, "global", "mqttReconnectInterval", 10)
+    
     self.configOpts['defaultHistoricDepth'] = self.parserGetIntWithDefault(parser, "global", "defaultHistoricDepth", 10)   
+    self.configOpts['sensorDataFile'] = self.parserGetWithDefault(parser, "global", "sensorDataFile", "sensordata.pickle")   
+
+    self.configOpts['defaultTimezone'] = datetime.timezone.utc
+    zone = self.parserGetWithDefault(parser, "global", "defaultTimezone", "America/Denver")
+    try:
+      self.configOpts['defaultTimezone'] = pytz.timezone(zone)
+    except:
+      print("Bad timezone [%s], defaulting to UTC" % self.configOpts['defaultTimezone'])
+      self.configOpts['defaultTimezone'] = datetime.timezone.utc
+
+def sensorsRetrieveOnStartup(pickleFilename):
+  return pickle.load( open( pickleFilename, "rb" ) )
+  
+def sensorsSaveOnExit(sensorNodeTree, pickleFilename):
+  pickle.dump( sensorNodeTree, open( pickleFilename, "wb" ) )
+
 
 def mqtt_onMessage(client, userdata, message):
   payload = message.payload.decode()
@@ -276,13 +301,21 @@ def main(configFile):
   sensorStatus = SensorStatus.sensorStatus
   gConf = GlobalConfiguration()
   gConf.loadConfiguration(configFile)
-
+  sensorStatus.defaultTimezone = gConf.configOpts['defaultTimezone']
+  
+  try:
+    lastNodeTree = sensorsRetrieveOnStartup( gConf.configOpts['sensorDataFile'] )
+    sensorStatus.sensorNodeTree = lastNodeTree
+  except:
+    pass
+    
+  atexit.register(sensorsSaveOnExit, sensorNodeTree=sensorStatus.sensorNodeTree, pickleFilename=gConf.configOpts['sensorDataFile'] )
+  
   app = web.application(urlHandlers, globals())
   httpserver = web.httpserver
   
-  defaultDataDepth = 1
-  minInterval = 30
-    
+  
+
   mqtt.Client.connected_flag = False
   mqttClient = mqtt.Client(userdata={'sensorStatus':sensorStatus, 'gConf':gConf})
   mqttClient.on_connect=mqtt_onConnect
@@ -327,18 +360,24 @@ def main(configFile):
       
     except KeyboardInterrupt:
       print("User requested program termination, exiting...")
+      mqttClient.loop_stop()
+      
       if httpserver.server:
         httpserver.server.stop()
         httpserver.server = None
+      
       mqttClient.disconnect()
       sys.exit()
 
     except Exception as e:
       print("Unhandled exception")
       print(e)
+      mqttClient.loop_stop()
+      
       if httpserver.server:
         httpserver.stop()
         httpserver.server = None
+      
       mqttClient.disconnect()
       raise
  
