@@ -48,7 +48,7 @@ import iso8601
 import pytz
 
 import atexit
-
+import mysql.connector as mysql
 
 # TO DO
 # - Age out nodes that haven't been filled lately
@@ -226,6 +226,54 @@ class GlobalConfiguration:
       print("Bad timezone [%s], defaulting to UTC" % self.configOpts['defaultTimezone'])
       self.configOpts['defaultTimezone'] = datetime.timezone.utc
 
+    self.configOpts['mysqlUsername'] = self.parserGetWithDefault(parser, "global", "mysqlUsername", None)
+    self.configOpts['mysqlPassword'] = self.parserGetWithDefault(parser, "global", "mysqlPassword", None)
+    self.configOpts['mysqlServer'] = self.parserGetWithDefault(parser, "global", "mysqlServer", None)
+    self.configOpts['mysqlPort'] = self.parserGetIntWithDefault(parser, "global", "mysqlServer", 3306)
+    self.configOpts['mysqlDatabaseName'] = self.parserGetIntWithDefault(parser, "global", "mysqlDatabaseName", "sensornet")
+    
+    dblogging = self.parserGetWithDefault(parser, "global", "defaultLogToDatabase", "false")
+    if dblogging.casefold() == "true".casefold():
+      self.configOpts['defaultLogToDatabase'] = True
+    else:
+      self.configOpts['defaultLogToDatabase'] = False
+    
+    self.configOpts['defaultDBMinimumLogInterval'] = self.parserGetIntWithDefault(parser, "global", "defaultDBMinimumLogInterval", 1)
+    
+    
+    
+    self.configOpts['sensors'] = { }
+    
+    # Get sensors
+    sections = parser.sections()
+    REsensor = re.compile("(?P<type>[a-zA-Z0-9]+):(?P<sensorName>[a-zA-Z0-9_/]+)")
+    for section in sections:
+      print("Getting sensors from configuration")
+      match = REsensor.match(section)
+      
+      if match is None:
+        print("Ignoring section [%s]" % (section))
+      elif match.groupdict()['type'] == 'sensor':
+        print("Found sensor named [%s]" % (match.groupdict()['sensorName']))
+        sensorName = match.groupdict()['sensorName']
+
+        sensor = { 'name':sensorName }
+        
+        dblogging = self.parserGetWithDefault(parser, section, "logToDatabase", "false")
+        if dblogging.casefold() == "true".casefold():
+          sensor['logToDatabase'] = True
+        else:
+          sensor['logToDatabase'] = False
+
+        sensor['dbMinimumLogInterval'] = self.parserGetIntWithDefault(parser, section, "dbMinimumLogInterval", self.configOpts['defaultDBMinimumLogInterval'])
+        sensor['historicDepth'] = self.parserGetIntWithDefault(parser, section, "historicDepth", self.configOpts['defaultHistoricDepth'])
+
+        if sensor['name'] in self.configOpts['sensors']:
+          print("ERROR!  A sensor named %s is already configured" % (sensor['name']))
+        else:
+          self.configOpts['sensors'][sensor['name']] = sensor
+
+
 def sensorsRetrieveOnStartup(pickleFilename):
   return pickle.load( open( pickleFilename, "rb" ) )
   
@@ -233,12 +281,127 @@ def sensorsSaveOnExit(sensorNodeTree, pickleFilename):
   pickle.dump( sensorNodeTree, open( pickleFilename, "wb" ) )
 
 
+class mysqldb(object):
+  conn = None
+  hostname = 'localhost'
+  port = 3306
+  username = ''
+  password = ''
+  dbname = ''
+  nameIDCache = { }
+  lock = threading.Lock()
+  
+  def __init__(self, hostname, port, username, password, dbname):
+    try:
+      self.hostname = hostname
+      self.port = port
+      self.username = username
+      self.password = password
+      self.dbname = dbname
+      self.reinit()
+    except:
+      pass
+      
+  def reinit(self):
+    try:
+      print("Trying to connect to mysql")
+      self.conn = mysql.connect(host=self.hostname, port=self.port, user=self.username, passwd=self.password, database=self.dbname)
+      print("mysql connect success")
+    except Exception as e:
+      print("mysql connect FAILURE")
+      pass
+      
+  def getNameID(self, nameStr):
+    # The easy way - get the nameID from cache
+    if nameStr in self.nameIDCache:
+      return self.nameIDCache[nameStr]
+    
+    if not self.conn.is_connected():
+      # Ping will automagically attempt reconnections
+      #print("mysql not connected, trying ping to restart")
+      try:
+        self.conn.ping(reconnect=True, attempts=2, delay=1)
+      except InterfaceError:
+        pass
+    
+    if not self.conn.is_connected():
+      #print("still not connected, dying")
+      raise InterfaceError
+    
+    retval = 0
+    
+    try:
+      cursor = self.conn.cursor()
+      #print("starting new select")
+      query = "SELECT nameID FROM SensorNames WHERE sensorName=%s;"
+      cursor.execute(query, (nameStr,))
+      
+      for (nameID,) in cursor:
+        self.nameIDCache[nameStr] = nameID
+        retval = int(nameID)
+        break
+
+
+      if 0 == retval:
+        #print("name doesn't exist, do something")
+        query = "INSERT INTO SensorNames (nameID,sensorName) VALUES (0,%s);"
+        cursor.execute(query, (nameStr,))
+        self.conn.commit()
+        query = "SELECT nameID FROM SensorNames WHERE sensorName=%s"
+        cursor.execute(query, (nameStr,))
+        for (nameID,) in cursor:
+          self.nameIDCache[nameStr] = nameID
+          retval = int(nameID)
+          break
+      
+      cursor.close()
+      
+      if retval != 0:
+        return retval
+      else:
+        raise InterfaceError
+      
+    except Exception as e:
+      print("Exception in getNameID")
+      print(e)
+      raise InterfaceError
+
+  def insertSensorData(self, nameStr, timestamp, datavalue):
+    if not self.conn.is_connected():
+      # Ping will automagically attempt reconnections
+      print("mysql not connected, trying ping to restart")
+      try:
+        self.conn.ping(reconnect=True, attempts=2, delay=1)
+      except InterfaceError:
+        pass
+    
+    if not self.conn.is_connected():
+      print("still not connected, dying")
+      raise InterfaceError
+    
+    nameID = self.getNameID(nameStr)
+    
+    try:
+      #YYYY-MM-DD hh:mm:ss
+      timestampStr = timestamp.strftime("%Y-%m-%d %H:%M:%S.%f")
+      
+      cursor = self.conn.cursor()
+      query = "INSERT INTO SensorData (nameID,timestamp,value) VALUES (%s, %s, %s);"
+      cursor.execute(query, (nameID, timestamp, datavalue))
+      self.conn.commit()
+      cursor.close()
+      
+    except Exception as e:
+      print("Exception in insertSensorData")
+      print(e)
+      raise InterfaceError
+
 def mqtt_onMessage(client, userdata, message):
   payload = message.payload.decode()
-  sensor = message.topic
+  sensorName = message.topic
   lastUpdate = time.time()
   
-  print("Message [%s]: %s" % (sensor, payload))
+  print("Message [%s]: %s" % (sensorName, payload))
 
   try:
     decodedValues = json.loads(payload)
@@ -265,14 +428,37 @@ def mqtt_onMessage(client, userdata, message):
       print("Bogus timestamp")
       return
   else:
-    measurementTime = datetime.datetime.utcnow().timestamp()
+    measurementDT = datetime.datetime.utcnow()
+    measurementTime = measurementDT.timestamp()
 
-  print("Inserting data - [%s]=>%s" % (sensor, decodedValues));
+  print("Inserting data - [%s]=>%s" % (sensorName, decodedValues));
 
   thisEntry = {'value':decodedValues['value'], 'time':measurementTime }
 
+  # At this point the message is good and validated
+  # Now we acquire a lock for as little time as possible
+
+  if sensorName in userdata['gConf'].configOpts['sensors']:
+    maxLen = userdata['gConf'].configOpts['sensors'][sensorName]['historicDepth']
+    dbLog = userdata['gConf'].configOpts['sensors'][sensorName]['logToDatabase']
+    dbMinInterval = userdata['gConf'].configOpts['sensors'][sensorName]['dbMinimumLogInterval']
+  else:
+    maxLen = userdata['gConf'].configOpts['defaultHistoricDepth']
+    dbLog = userdata['gConf'].configOpts['defaultLogToDatabase']
+    dbMinInterval = userdata['gConf'].configOpts['defaultDBMinimumLogInterval']
+
+  mysql = userdata['dbConnection']
+ 
+  if dbLog:
+    try:
+      # FIXME: This is where we should insert something for minimum log interval
+      mysql.insertSensorData(sensorName, measurementDT, decodedValues['value'])
+    except:
+      print("Error: failed DB stuff, going on")
+
+
   userdata['sensorStatus'].lock.acquire()
-  
+ 
   try:
     sensorNodeTree = userdata['sensorStatus'].sensorNodeTree
   
@@ -282,19 +468,19 @@ def mqtt_onMessage(client, userdata, message):
       # Don't insert entries older than the most current
       if thisEntry['time'] > sensorNodeTree[message.topic][0]['time']:
         sensorNodeTree[message.topic].insert(0, thisEntry)
-  
-    if message.topic in userdata['gConf'].historicMaxDepth:
-      maxLen = userdata['gConf'].historicMaxDepth[message.topic]
-    else:
-      maxLen = userdata['gConf'].configOpts['defaultHistoricDepth']
-  
+
+      
+ 
     while len(sensorNodeTree[message.topic]) > maxLen:
       sensorNodeTree[message.topic].pop()
+      
   except Exception as e:
     print("mqtt_onMessage got exception")
     print(e)
   finally:
     userdata['sensorStatus'].lock.release()
+    
+  
 
 def main(configFile):
   # Global sensor status object - jointly used by MQTT and webserver, must be locked
@@ -313,11 +499,19 @@ def main(configFile):
   
   app = web.application(urlHandlers, globals())
   httpserver = web.httpserver
-  
-  
+
+  mqttDB = None
+  if gConf.configOpts['mysqlServer'] is not None and gConf.configOpts['mysqlUsername'] is not None and gConf.configOpts['mysqlPassword'] is not None:
+    try:
+      mqttDB = mysqldb(gConf.configOpts['mysqlServer'], gConf.configOpts['mysqlPort'], gConf.configOpts['mysqlUsername'], gConf.configOpts['mysqlPassword'], gConf.configOpts['mysqlDatabaseName'])
+      print("Database connection succeeded")
+    except:
+      print("Database connection failed")
+      mqttDB = None
+
 
   mqtt.Client.connected_flag = False
-  mqttClient = mqtt.Client(userdata={'sensorStatus':sensorStatus, 'gConf':gConf})
+  mqttClient = mqtt.Client(userdata={'sensorStatus':sensorStatus, 'gConf':gConf, 'dbConnection':mqttDB})
   mqttClient.on_connect=mqtt_onConnect
   mqttClient.on_disconnect=mqtt_onDisconnect
   mqttClient.on_message = mqtt_onMessage
@@ -362,6 +556,13 @@ def main(configFile):
       print("User requested program termination, exiting...")
       mqttClient.loop_stop()
       
+      try:
+        if mqttDB is not None:
+          mqttDB.close()
+      except:
+        pass
+      
+      
       if httpserver.server:
         httpserver.server.stop()
         httpserver.server = None
@@ -373,7 +574,13 @@ def main(configFile):
       print("Unhandled exception")
       print(e)
       mqttClient.loop_stop()
-      
+
+      try:
+        if mqttDB is not None:
+          mqttDB.close()
+      except:
+        pass
+
       if httpserver.server:
         httpserver.stop()
         httpserver.server = None

@@ -1,0 +1,17 @@
+mysql commands
+
+create user 'sensornet'@'localhost' identified by '8Dgx4gJ9xuc5f2gs';
+
+alter user 'sensornet'@'localhost' identified by '8Dgx4gJ9xuc5f2gs';
+
+grant 
+
+
+create database sensornet;
+use sensornet;
+
+create table SensorNames (nameID MEDIUMINT NOT NULL AUTO_INCREMENT, sensorName VARCHAR(1024), constraint nameID_pk primary key (nameID) );
+create table SensorData (nameID MEDIUMINT NOT NULL, timestamp DATETIME, value VARCHAR(32), foreign key (nameID) references sensorNames(nameID) );
+
+
+select nameID from sensornet.SensorNames where sensorName='bubba';
