@@ -91,10 +91,78 @@ class ws_getval:
     return output
 
 class ws_gethistory:
+  def sortByDatetime(self, element):
+    return element['time']
+    
   def GET(self, path):
     output = ""
     args = web.input()
     outputlist = [ ]
+    webdbConnectData = SensorStatus.sensorStatus.webdbConnectData
+    # Get starting date/time
+    try:
+      startDT = iso8601.parse_date(args['start']).astimezone(tzinfo=datetime.timezone.utc)
+      startTime = startDT.timestamp()
+    except:
+      # Assume 1 week of data
+      startDT = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc) - datetime.timedelta(days=7)
+      startTime = startDT.timestamp()
+
+    print("Starting history at %s" % startDT.isoformat())
+
+    # Get ending date/time
+    try:
+      endDT = iso8601.parse_date(args['end']).astimezone(tzinfo=datetime.timezone.utc)
+      endTime = endDT.timestamp()
+    except:
+      # Assume now, giving us 1 week of data
+      endDT = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
+      endTime = endDT.timestamp()
+    
+    print("Ending history at %s" % endDT.isoformat())
+
+
+    resultsTimezone = SensorStatus.sensorStatus.defaultTimezone
+    if 'tz' in args:
+      try:
+        resultsTimezone = pytz.timezone(args['tz'])
+      except:
+        pass
+
+    try:
+      minIncrement = int(args['increment'])
+    except:
+      minIncrement = 1
+      
+    # Is this sensor in the database for our date range?  Try there first
+    webDB = None
+    if webdbConnectData['mysqlServer'] is not None and webdbConnectData['mysqlUsername'] is not None and webdbConnectData['mysqlPassword'] is not None:
+      try:
+        webDB = mysqldb(webdbConnectData['mysqlServer'], webdbConnectData['mysqlPort'], webdbConnectData['mysqlUsername'], webdbConnectData['mysqlPassword'], webdbConnectData['mysqlDatabaseName'])
+        #print("Database connection succeeded")
+        cursor = webDB.conn.cursor()
+        query = "SELECT DATE_FORMAT(d.timestamp, '%Y-%m-%dT%TZ'), d.value FROM SensorData AS d INNER JOIN SensorNames AS n ON (d.nameID=n.nameID) WHERE n.sensorName=%s AND d.timestamp >= %s and d.timestamp <= %s ORDER BY d.timestamp"
+        cursor.execute(query, (path, startDT.strftime("%Y-%m-%d %H:%M:%S.%f"), endDT.strftime("%Y-%m-%d %H:%M:%S.%f")))
+        for (timestamp,value) in cursor:
+          # all DB in UTC
+          try:
+            timeDT = iso8601.parse_date(timestamp).replace(tzinfo=datetime.timezone.utc)
+            localTimeDT = timeDT.astimezone(resultsTimezone)
+            element = {'time':localTimeDT.isoformat(), 'value':value}
+            outputlist.append(element)
+              
+          except Exception as e:
+            print("Database record [%s]=>[%s] failed\n" % (timestamp, value))
+            print(e)
+        cursor.close()
+      except Exception as e:
+        print(e)
+      finally:
+        try:
+          webDB.conn.close()
+        except:
+          pass
+
     SensorStatus.sensorStatus.lock.acquire()
     sensorStatus = SensorStatus.sensorStatus
 
@@ -102,16 +170,7 @@ class ws_gethistory:
       for entry in sensorStatus.sensorNodeTree[path]['data']:
         # All timestamps, as stored, are in UTC.  Make sure we read it and put UTC as the timezone
         timeDT = datetime.datetime.fromtimestamp(entry['time']).replace(tzinfo=datetime.timezone.utc)
-        
-        if 'tz' in args:
-          try:
-            zone = pytz.timezone(args['tz'])
-            newLocalTimeDT = timeDT.astimezone(zone)
-            localTimeDT = newLocalTimeDT
-          except:
-            pass
-        else:
-          localTimeDT = timeDT.astimezone(sensorStatus.defaultTimezone)
+        localTimeDT = timeDT.astimezone(resultsTimezone)
 
         if 'format' in args:
           timeStr = localTimeDT.strftime(args['format'])
@@ -124,9 +183,27 @@ class ws_gethistory:
 
     SensorStatus.sensorStatus.lock.release()
 
+    outputlist.sort(key = self.sortByDatetime)
+
+    # Now, work through the outputlist and delete elements that do not make the minimum increment
+    maxel = len(outputlist)
+    i = 0
+    lastTime = datetime.datetime.fromtimestamp(0).replace(tzinfo=datetime.timezone.utc)
+    while i < maxel:
+      thisTime = iso8601.parse_date(outputlist[i]['time'])
+      if thisTime < lastTime + datetime.timedelta(seconds=minIncrement):
+        del outputlist[i]
+        maxel = len(outputlist)
+      else:
+        i = i + 1
+        lastTime = thisTime
+
     output = json.dumps(outputlist)
     
     return output
+
+
+
 
 urlHandlers = (
   '/nodelist', 'ws_nodelist',
@@ -215,7 +292,6 @@ class GlobalConfiguration:
     self.configOpts['mqttPassword'] = self.parserGetWithDefault(parser, "global", "mqttPassword", None)
     self.configOpts['mqttReconnectInterval'] = self.parserGetIntWithDefault(parser, "global", "mqttReconnectInterval", 10)
     
-    self.configOpts['defaultHistoricDepth'] = self.parserGetIntWithDefault(parser, "global", "defaultHistoricDepth", 10)   
     self.configOpts['sensorDataFile'] = self.parserGetWithDefault(parser, "global", "sensorDataFile", "sensordata.pickle")   
 
     self.configOpts['defaultTimezone'] = datetime.timezone.utc
@@ -231,16 +307,19 @@ class GlobalConfiguration:
     self.configOpts['mysqlServer'] = self.parserGetWithDefault(parser, "global", "mysqlServer", None)
     self.configOpts['mysqlPort'] = self.parserGetIntWithDefault(parser, "global", "mysqlServer", 3306)
     self.configOpts['mysqlDatabaseName'] = self.parserGetIntWithDefault(parser, "global", "mysqlDatabaseName", "sensornet")
-    
-    dblogging = self.parserGetWithDefault(parser, "global", "defaultLogToDatabase", "false")
+
+    self.configOpts['mysqlReadOnlyUsername'] = self.parserGetWithDefault(parser, "global", "mysqlReadOnlyUsername", self.configOpts['mysqlUsername'])
+    self.configOpts['mysqlReadOnlyPassword'] = self.parserGetWithDefault(parser, "global", "mysqlPassword", self.configOpts['mysqlPassword'])
+   
+    dblogging = self.parserGetWithDefault(parser, "global", "defaultDatabaseLogEnable", "false")
     if dblogging.casefold() == "true".casefold():
-      self.configOpts['defaultLogToDatabase'] = True
+      self.configOpts['defaultDatabaseLogEnable'] = True
     else:
-      self.configOpts['defaultLogToDatabase'] = False
+      self.configOpts['defaultDatabaseLogEnable'] = False
     
-    self.configOpts['defaultDBMinimumLogInterval'] = self.parserGetIntWithDefault(parser, "global", "defaultDBMinimumLogInterval", 1)
-    
-    
+    self.configOpts['defaultDatabaseLogInterval'] = self.parserGetIntWithDefault(parser, "global", "defaultDatabaseLogInterval", 1)
+    self.configOpts['defaultMemoryLogInterval'] = self.parserGetIntWithDefault(parser, "global", "defaultMemoryLogInterval", 1)
+    self.configOpts['defaultMemoryLogDepth'] = self.parserGetIntWithDefault(parser, "global", "defaultMemoryLogDepth", 10)       
     
     self.configOpts['sensors'] = { }
     
@@ -259,15 +338,17 @@ class GlobalConfiguration:
 
         sensor = { 'name':sensorName }
         
-        dblogging = self.parserGetWithDefault(parser, section, "logToDatabase", "false")
+        dblogging = self.parserGetWithDefault(parser, section, "databaseLogEnable", "false")
         if dblogging.casefold() == "true".casefold():
-          sensor['logToDatabase'] = True
+          sensor['databaseLogEnable'] = True
         else:
-          sensor['logToDatabase'] = False
+          sensor['databaseLogEnable'] = False
 
-        sensor['dbMinimumLogInterval'] = self.parserGetIntWithDefault(parser, section, "dbMinimumLogInterval", self.configOpts['defaultDBMinimumLogInterval'])
-        sensor['historicDepth'] = self.parserGetIntWithDefault(parser, section, "historicDepth", self.configOpts['defaultHistoricDepth'])
+        sensor['databaseLogInterval'] = self.parserGetIntWithDefault(parser, section, "databaseLogInterval", self.configOpts['defaultDatabaseLogInterval'])
 
+        sensor['memoryLogDepth'] = self.parserGetIntWithDefault(parser, section, "memoryLogDepth", self.configOpts['defaultMemoryLogDepth'])
+        sensor['memoryLogInterval'] = self.parserGetIntWithDefault(parser, section, "memoryLogInterval", self.configOpts['defaultMemoryLogInterval'])
+        
         if sensor['name'] in self.configOpts['sensors']:
           print("ERROR!  A sensor named %s is already configured" % (sensor['name']))
         else:
@@ -439,13 +520,15 @@ def mqtt_onMessage(client, userdata, message):
   # Now we acquire a lock for as little time as possible
   try:
     if sensorName in userdata['gConf'].configOpts['sensors']:
-      maxLen = userdata['gConf'].configOpts['sensors'][sensorName]['historicDepth']
-      dbLog = userdata['gConf'].configOpts['sensors'][sensorName]['logToDatabase']
-      dbMinInterval = userdata['gConf'].configOpts['sensors'][sensorName]['dbMinimumLogInterval']
+      maxLen = userdata['gConf'].configOpts['sensors'][sensorName]['memoryLogDepth']
+      minInterval = userdata['gConf'].configOpts['sensors'][sensorName]['memoryLogInterval']
+      dbLog = userdata['gConf'].configOpts['sensors'][sensorName]['databaseLogEnable']
+      dbMinInterval = userdata['gConf'].configOpts['sensors'][sensorName]['databaseLogInterval']
     else:
-      maxLen = userdata['gConf'].configOpts['defaultHistoricDepth']
-      dbLog = userdata['gConf'].configOpts['defaultLogToDatabase']
-      dbMinInterval = userdata['gConf'].configOpts['defaultDBMinimumLogInterval']
+      maxLen = userdata['gConf'].configOpts['defaultMemoryLogDepth']
+      minInterval = userdata['gConf'].configOpts['defaultMemoryLogInterval']
+      dbLog = userdata['gConf'].configOpts['defaultDatabaseLogEnable']
+      dbMinInterval = userdata['gConf'].configOpts['defaultDatabaseLogInterval']
   except Exception as e:
     print(e)
 
@@ -500,8 +583,10 @@ def mqtt_onMessage(client, userdata, message):
     
     if len(sensorNodeTree[message.topic]['data']) == 0:
       sensorNodeTree[message.topic]['data'].insert(0, thisEntry)
-    # Don't insert entries older than the most current
-    elif thisEntry['time'] > sensorNodeTree[message.topic]['data'][0]['time']:
+    # Don't insert entries older than the most current and make sure they exceed the minimum
+    # memory log interval
+    elif ( thisEntry['time'] > sensorNodeTree[message.topic]['data'][0]['time']
+      and sensorNodeTree[message.topic]['data'][0]['time'] + minInterval <= measurementTime ):
       sensorNodeTree[message.topic]['data'].insert(0, thisEntry)
 
     while len(sensorNodeTree[message.topic]['data']) > maxLen:
@@ -520,6 +605,12 @@ def main(configFile):
   gConf = GlobalConfiguration()
   gConf.loadConfiguration(configFile)
   sensorStatus.defaultTimezone = gConf.configOpts['defaultTimezone']
+  sensorStatus.webdbConnectData['mysqlServer'] = gConf.configOpts['mysqlServer']
+  sensorStatus.webdbConnectData['mysqlPort'] = gConf.configOpts['mysqlPort']
+  sensorStatus.webdbConnectData['mysqlUsername'] = gConf.configOpts['mysqlReadOnlyUsername']
+  sensorStatus.webdbConnectData['mysqlPassword'] = gConf.configOpts['mysqlReadOnlyPassword']
+  sensorStatus.webdbConnectData['mysqlDatabaseName'] = gConf.configOpts['mysqlDatabaseName']
+  
   
   try:
     lastNodeTree = sensorsRetrieveOnStartup( gConf.configOpts['sensorDataFile'] )
