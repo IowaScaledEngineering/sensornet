@@ -1,13 +1,12 @@
 mysql commands
 
-create user 'sensornet'@'localhost' identified by '8Dgx4gJ9xuc5f2gs';
-
-alter user 'sensornet'@'localhost' identified by '8Dgx4gJ9xuc5f2gs';
-
-grant 
-
-
 create database sensornet;
+
+create user 'sensornet'@'localhost' identified by '8Dgx4gJ9xuc5f2gs';
+GRANT ALL PRIVILEGES ON sensornet.* TO 'sensornet'@'localhost';
+create user 'sensornet_ro'@'localhost' identified by 'Q5qbNMP8ZU42fxGP';
+GRANT SELECT ON sensornet.* TO 'sensornet_ro'@'localhost';
+
 use sensornet;
 
 create table SensorNames (nameID MEDIUMINT NOT NULL AUTO_INCREMENT, sensorName VARCHAR(1024), constraint nameID_pk primary key (nameID) );
@@ -15,3 +14,5 @@ create table SensorData (nameID MEDIUMINT NOT NULL, timestamp DATETIME, value VA
 
 
 select nameID from sensornet.SensorNames where sensorName='bubba';
+
+
