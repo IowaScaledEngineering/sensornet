@@ -308,7 +308,7 @@ class GlobalConfiguration:
     self.configOpts['mysqlUsername'] = self.parserGetWithDefault(parser, "global", "mysqlUsername", None)
     self.configOpts['mysqlPassword'] = self.parserGetWithDefault(parser, "global", "mysqlPassword", None)
     self.configOpts['mysqlServer'] = self.parserGetWithDefault(parser, "global", "mysqlServer", None)
-    self.configOpts['mysqlPort'] = self.parserGetIntWithDefault(parser, "global", "mysqlServer", 3306)
+    self.configOpts['mysqlPort'] = self.parserGetIntWithDefault(parser, "global", "mysqlPort", 3306)
     self.configOpts['mysqlDatabaseName'] = self.parserGetIntWithDefault(parser, "global", "mysqlDatabaseName", "sensornet")
     self.configOpts['mysqlReadOnlyUsername'] = self.parserGetWithDefault(parser, "global", "mysqlReadOnlyUsername", self.configOpts['mysqlUsername'])
     self.configOpts['mysqlReadOnlyPassword'] = self.parserGetWithDefault(parser, "global", "mysqlReadOnlyPassword", self.configOpts['mysqlPassword'])
@@ -322,6 +322,10 @@ class GlobalConfiguration:
     self.configOpts['defaultDatabaseLogInterval'] = self.parserGetIntWithDefault(parser, "global", "defaultDatabaseLogInterval", 1)
     self.configOpts['defaultMemoryLogInterval'] = self.parserGetIntWithDefault(parser, "global", "defaultMemoryLogInterval", 1)
     self.configOpts['defaultMemoryLogDepth'] = self.parserGetIntWithDefault(parser, "global", "defaultMemoryLogDepth", 10)       
+    
+    self.configOpts['webserviceIP'] = self.parserGetWithDefault(parser, "global", "webserviceIP", "0.0.0.0")
+    self.configOpts['webservicePort'] = self.parserGetIntWithDefault(parser, "global", "webservicePort", 8082)
+    
     
     self.configOpts['sensors'] = { }
     
@@ -644,7 +648,7 @@ def main(configFile):
     mqttClient.username_pw_set(username=gConf.configOpts['mqttUsername'], password=gConf.configOpts['mqttPassword'])
   
 
-  thread.start_new_thread(runWebserver, (httpserver, app, ('0.0.0.0', 8082)))
+  thread.start_new_thread(runWebserver, (httpserver, app, (gConf.configOpts['webserviceIP'], gConf.configOpts['webservicePort'])))
   print("Webserver started")
 
   lastMQTTConnectAttempt = None
