@@ -136,10 +136,13 @@ class ws_gethistory:
       
     # Is this sensor in the database for our date range?  Try there first
     webDB = None
-    if webdbConnectData['mysqlServer'] is not None and webdbConnectData['mysqlUsername'] is not None and webdbConnectData['mysqlPassword'] is not None:
+    if webdbConnectData['mysqlServer'] is not None and webdbConnectData['mysqlReadOnlyUsername'] is not None and webdbConnectData['mysqlReadOnlyPassword'] is not None:
       try:
-        webDB = mysqldb(webdbConnectData['mysqlServer'], webdbConnectData['mysqlPort'], webdbConnectData['mysqlUsername'], webdbConnectData['mysqlPassword'], webdbConnectData['mysqlDatabaseName'])
-        #print("Database connection succeeded")
+        webDB = mysqldb(webdbConnectData['mysqlServer'], webdbConnectData['mysqlPort'], webdbConnectData['mysqlReadOnlyUsername'], webdbConnectData['mysqlReadOnlyPassword'], webdbConnectData['mysqlDatabaseName'])
+        
+        if not webDB.conn.is_connected():
+          raise InterfaceError
+
         cursor = webDB.conn.cursor()
         query = "SELECT DATE_FORMAT(d.timestamp, '%Y-%m-%dT%TZ'), d.value FROM SensorData AS d INNER JOIN SensorNames AS n ON (d.nameID=n.nameID) WHERE n.sensorName=%s AND d.timestamp >= %s and d.timestamp <= %s ORDER BY d.timestamp"
         cursor.execute(query, (path, startDT.strftime("%Y-%m-%d %H:%M:%S.%f"), endDT.strftime("%Y-%m-%d %H:%M:%S.%f")))
@@ -307,9 +310,8 @@ class GlobalConfiguration:
     self.configOpts['mysqlServer'] = self.parserGetWithDefault(parser, "global", "mysqlServer", None)
     self.configOpts['mysqlPort'] = self.parserGetIntWithDefault(parser, "global", "mysqlServer", 3306)
     self.configOpts['mysqlDatabaseName'] = self.parserGetIntWithDefault(parser, "global", "mysqlDatabaseName", "sensornet")
-
     self.configOpts['mysqlReadOnlyUsername'] = self.parserGetWithDefault(parser, "global", "mysqlReadOnlyUsername", self.configOpts['mysqlUsername'])
-    self.configOpts['mysqlReadOnlyPassword'] = self.parserGetWithDefault(parser, "global", "mysqlPassword", self.configOpts['mysqlPassword'])
+    self.configOpts['mysqlReadOnlyPassword'] = self.parserGetWithDefault(parser, "global", "mysqlReadOnlyPassword", self.configOpts['mysqlPassword'])
    
     dblogging = self.parserGetWithDefault(parser, "global", "defaultDatabaseLogEnable", "false")
     if dblogging.casefold() == "true".casefold():
@@ -607,8 +609,8 @@ def main(configFile):
   sensorStatus.defaultTimezone = gConf.configOpts['defaultTimezone']
   sensorStatus.webdbConnectData['mysqlServer'] = gConf.configOpts['mysqlServer']
   sensorStatus.webdbConnectData['mysqlPort'] = gConf.configOpts['mysqlPort']
-  sensorStatus.webdbConnectData['mysqlUsername'] = gConf.configOpts['mysqlReadOnlyUsername']
-  sensorStatus.webdbConnectData['mysqlPassword'] = gConf.configOpts['mysqlReadOnlyPassword']
+  sensorStatus.webdbConnectData['mysqlReadOnlyUsername'] = gConf.configOpts['mysqlReadOnlyUsername']
+  sensorStatus.webdbConnectData['mysqlReadOnlyPassword'] = gConf.configOpts['mysqlReadOnlyPassword']
   sensorStatus.webdbConnectData['mysqlDatabaseName'] = gConf.configOpts['mysqlDatabaseName']
   
   
