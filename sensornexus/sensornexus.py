@@ -52,9 +52,7 @@ import mysql.connector as mysql
 
 # TO DO
 # - Age out nodes that haven't been filled lately
-# - Store selected nodes to database
 # - Implement maximum update rate
-# - Implement queue for holding last X values
 # - Implement configuration file
 
 class ws_status:        
@@ -72,7 +70,7 @@ class ws_nodelist:
     sensorStatus = SensorStatus.sensorStatus
     keys = sorted(sensorStatus.sensorNodeTree.keys())
     for key in keys:
-      sensor = sensorStatus.sensorNodeTree[key]
+      sensor = sensorStatus.sensorNodeTree[key]['data']
       output += "%s = %s\n" % (key, sensor[0]['value'])
     SensorStatus.sensorStatus.lock.release()
     return output
@@ -85,7 +83,7 @@ class ws_getval:
     SensorStatus.sensorStatus.lock.acquire()
     sensorStatus = SensorStatus.sensorStatus
     if path in sensorStatus.sensorNodeTree:
-      output += "%s" % (sensorStatus.sensorNodeTree[path][0]['value'])
+      output += "%s" % (sensorStatus.sensorNodeTree[path]['data'][0]['value'])
     else:
       output += "None"
     SensorStatus.sensorStatus.lock.release()
@@ -96,13 +94,12 @@ class ws_gethistory:
   def GET(self, path):
     output = ""
     args = web.input()
-    
+    outputlist = [ ]
     SensorStatus.sensorStatus.lock.acquire()
     sensorStatus = SensorStatus.sensorStatus
-    
+
     if path in sensorStatus.sensorNodeTree:
-      for entry in sensorStatus.sensorNodeTree[path]:
-        
+      for entry in sensorStatus.sensorNodeTree[path]['data']:
         # All timestamps, as stored, are in UTC.  Make sure we read it and put UTC as the timezone
         timeDT = datetime.datetime.fromtimestamp(entry['time']).replace(tzinfo=datetime.timezone.utc)
         
@@ -120,11 +117,14 @@ class ws_gethistory:
           timeStr = localTimeDT.strftime(args['format'])
         else:
           timeStr = localTimeDT.isoformat()
+        
+        element = {'time':timeStr, 'value':entry['value']}
+        
+        outputlist.append(element)
 
-        output += "%s,%s\n" % (timeStr, entry['value'])
-    else:
-      output += "None"
     SensorStatus.sensorStatus.lock.release()
+
+    output = json.dumps(outputlist)
     
     return output
 
@@ -437,50 +437,82 @@ def mqtt_onMessage(client, userdata, message):
 
   # At this point the message is good and validated
   # Now we acquire a lock for as little time as possible
-
-  if sensorName in userdata['gConf'].configOpts['sensors']:
-    maxLen = userdata['gConf'].configOpts['sensors'][sensorName]['historicDepth']
-    dbLog = userdata['gConf'].configOpts['sensors'][sensorName]['logToDatabase']
-    dbMinInterval = userdata['gConf'].configOpts['sensors'][sensorName]['dbMinimumLogInterval']
-  else:
-    maxLen = userdata['gConf'].configOpts['defaultHistoricDepth']
-    dbLog = userdata['gConf'].configOpts['defaultLogToDatabase']
-    dbMinInterval = userdata['gConf'].configOpts['defaultDBMinimumLogInterval']
-
-  mysql = userdata['dbConnection']
- 
-  if dbLog:
-    try:
-      # FIXME: This is where we should insert something for minimum log interval
-      mysql.insertSensorData(sensorName, measurementDT, decodedValues['value'])
-    except:
-      print("Error: failed DB stuff, going on")
-
-
-  userdata['sensorStatus'].lock.acquire()
- 
   try:
-    sensorNodeTree = userdata['sensorStatus'].sensorNodeTree
-  
-    if message.topic not in sensorNodeTree:
-      sensorNodeTree[message.topic] = [ thisEntry ]
+    if sensorName in userdata['gConf'].configOpts['sensors']:
+      maxLen = userdata['gConf'].configOpts['sensors'][sensorName]['historicDepth']
+      dbLog = userdata['gConf'].configOpts['sensors'][sensorName]['logToDatabase']
+      dbMinInterval = userdata['gConf'].configOpts['sensors'][sensorName]['dbMinimumLogInterval']
     else:
-      # Don't insert entries older than the most current
-      if thisEntry['time'] > sensorNodeTree[message.topic][0]['time']:
-        sensorNodeTree[message.topic].insert(0, thisEntry)
+      maxLen = userdata['gConf'].configOpts['defaultHistoricDepth']
+      dbLog = userdata['gConf'].configOpts['defaultLogToDatabase']
+      dbMinInterval = userdata['gConf'].configOpts['defaultDBMinimumLogInterval']
+  except Exception as e:
+    print(e)
 
-      
- 
-    while len(sensorNodeTree[message.topic]) > maxLen:
-      sensorNodeTree[message.topic].pop()
+  # Make sure sensor is in the node tree, and if not, add it.
+  # This saves a bunch of spaghetti logic later on in the data storage and DB code
+  userdata['sensorStatus'].lock.acquire()
+  sensorNodeTree = userdata['sensorStatus'].sensorNodeTree
+  if message.topic not in sensorNodeTree:    
+    sensorNodeTree[message.topic] = { }
+    sensorNodeTree[message.topic]['meta'] = { } # Metadata is a dictionary of various meta about the readings
+    sensorNodeTree[message.topic]['data'] = [ ] # Data is a list of readings by clock order
+  userdata['sensorStatus'].lock.release()
+
+  
+  # Update sensor reading array in database
+  timeToWriteToDB = False
+  if dbLog:
+    # Get a lock so we can go get the last DB write
+    userdata['sensorStatus'].lock.acquire()
+    try:
+      sensorNodeTree = userdata['sensorStatus'].sensorNodeTree
+
+      if 'lastDBWrite' not in sensorNodeTree[message.topic]['meta']:
+        sensorNodeTree[message.topic]['meta']['lastDBWrite'] = 0
+        
+      if sensorNodeTree[message.topic]['meta']['lastDBWrite'] + dbMinInterval <= measurementTime:
+        timeToWriteToDB = True
+    except:
+      pass
+    finally:
+      userdata['sensorStatus'].lock.release()
+
+    # Only add to DB if we are past the minimum interval
+    if timeToWriteToDB:
+      try:
+        mysql = userdata['dbConnection']
+        mysql.insertSensorData(sensorName, measurementDT, decodedValues['value'])
+      except:
+        print("Error: failed DB stuff, going on")
+        # We didn't write, so don't update the time
+        timeToWriteToDB = False 
+
+
+  # Update sensor reading array in memory
+  try:
+    userdata['sensorStatus'].lock.acquire()
+    sensorNodeTree = userdata['sensorStatus'].sensorNodeTree
+    
+    # Opportunistically use this lock to update the last DB measurement time
+    if timeToWriteToDB is True:
+      sensorNodeTree[message.topic]['meta']['lastDBWrite'] = measurementTime
+    
+    if len(sensorNodeTree[message.topic]['data']) == 0:
+      sensorNodeTree[message.topic]['data'].insert(0, thisEntry)
+    # Don't insert entries older than the most current
+    elif thisEntry['time'] > sensorNodeTree[message.topic]['data'][0]['time']:
+      sensorNodeTree[message.topic]['data'].insert(0, thisEntry)
+
+    while len(sensorNodeTree[message.topic]['data']) > maxLen:
+      sensorNodeTree[message.topic]['data'].pop()
       
   except Exception as e:
     print("mqtt_onMessage got exception")
     print(e)
   finally:
     userdata['sensorStatus'].lock.release()
-    
-  
+
 
 def main(configFile):
   # Global sensor status object - jointly used by MQTT and webserver, must be locked
