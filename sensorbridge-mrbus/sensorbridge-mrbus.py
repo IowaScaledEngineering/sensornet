@@ -261,6 +261,8 @@ def main(configFile, serialPort):
 
             if gConf.configOpts['mrbusInterfaceType'] == 'mrbee':
                mrbusInterfaceType = 'mrbee'
+            elif gConf.configOpts['mrbusInterfaceType'] == 'ci2':
+               mrbusInterfaceType = 'mrbus'
             else:
                mrbusInterfaceType = 'unknown'
 

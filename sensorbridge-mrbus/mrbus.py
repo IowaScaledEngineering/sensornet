@@ -481,6 +481,7 @@ class mrbus(object):
     self.pktlst=[]
     self.handlern=0
     self.handlers=[]
+    self.fakeLEDs={'D6':False, 'D7':False, 'D8':False, 'D9':False}
 
     self.mrbs.log(0, "instantiated %s from %s" % (self.busType, port.name))
 
@@ -503,12 +504,18 @@ class mrbus(object):
   def setXbeeLED(self, ledRefdes, ledState):
     if self.busType == 'mrbee':
       self.mrbs.setLED(ledRefdes, ledState)
+    else:
+      if ledState is bool:
+        self.fakeLEDs[ledRefdes] = ledState
 
   def getXbeeLED(self, ledRefdes):
     if self.busType == 'mrbee':
       return self.mrbs.getLED(ledRefdes)
     else:
-      return False
+      if ledRefdes in self.fakeLEDs:
+        return self.fakeLEDs[ledRefdes]
+      else:
+        return False
 
   def sendpkt(self, addr, data, src=None):
     self.mrbs.sendpkt(addr, data, src)
