@@ -151,7 +151,7 @@ class globalConfiguration:
       self.configOpts['mqttPassword'] = self.parserGetWithDefault(parser, "global", "mqttPassword", None)
       self.configOpts['mqttReconnectInterval'] = self.parserGetIntWithDefault(parser, "global", "mqttReconnectInterval", 10)
       self.configOpts['mrbusPort'] = self.parserGetWithDefault(parser, "global", "mrbusPort", None)
-      self.configOpts['mrbusInterfaceType'] = self.parserGetWithDefault(parser, "global", "mrbusInterface", "mrbee")
+      self.configOpts['mrbusInterfaceType'] = self.parserGetWithDefault(parser, "global", "mrbusInterfaceType", "mrbee")
 
       # Get sensors
       sections = parser.sections()
