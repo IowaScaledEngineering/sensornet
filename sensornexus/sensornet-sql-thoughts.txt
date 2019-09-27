@@ -10,7 +10,7 @@ GRANT SELECT ON sensornet.* TO 'sensornet_ro'@'localhost';
 use sensornet;
 
 create table SensorNames (nameID MEDIUMINT NOT NULL AUTO_INCREMENT, sensorName VARCHAR(1024), constraint nameID_pk primary key (nameID) );
-create table SensorData (nameID MEDIUMINT NOT NULL, timestamp DATETIME, value VARCHAR(32), foreign key (nameID) references sensorNames(nameID) );
+create table SensorData (nameID MEDIUMINT NOT NULL, timestamp DATETIME, value VARCHAR(32), foreign key (nameID) references SensorNames(nameID) );
 
 
 select nameID from sensornet.SensorNames where sensorName='bubba';
