@@ -107,11 +107,11 @@ class mrbusSimple(object):
     time.sleep(.1)
     while port.inWaiting():
       port.read(port.inWaiting())
-    port.write(':CMD NS=00;\r')
+    port.write(b':CMD NS=00;\r')
     if extra:
-      port.write(':CMD MM=00;\r')
+      port.write(b':CMD MM=00;\r')
     else:
-      port.write(':CMD MM=01;\r')
+      port.write(b':CMD MM=01;\r')
   
     port.timeout=0
 
@@ -157,21 +157,21 @@ class mrbusSimple(object):
 #      self.readline()
     if not l:
       return None
-    if l[-1] != '\n' and l[-1] != '\r':
-      self.log(1, '<<<'+l)
+    if l[-1] != b'\n' and l[-1] != b'\r':
+      self.log(1, '<<<'+str(l))
       return None
     l2=l.strip()
     if l2 == 'Ok':
-      self.log(0, '<<<'+l)
+      self.log(0, '<<<'+str(l))
       return None
     if len(l2)<2 or l2[0]!='P' or l2[1]!=':':
-      self.log(1, '<<<'+l)
+      self.log(1, '<<<'+str(l))
       return None
     d=[int(v,16) for v in l2[2:].split()]
     if len(d)<6 or len(d)!=d[2]:
-      self.log(1, '<<<'+l)
+      self.log(1, '<<<'+str(l))
       return None
-    self.log(0, '<<<'+l)
+    self.log(0, '<<<'+str(l))
     return packet(d[0], d[1], d[5], d[6:])
 
 
