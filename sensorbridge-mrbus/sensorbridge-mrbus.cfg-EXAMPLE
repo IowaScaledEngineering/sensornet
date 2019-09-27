@@ -6,6 +6,9 @@ mqttServer = localhost
 mqttPort = 1883
 mqttReconnectInterval = 10
 
+# mrbusInterfaceType = ci2
+# mrbusPort = /dev/ttyUSB0
+
 [sensor:basement/temperature]
 srcAddr = 0x20
 pktType = S
