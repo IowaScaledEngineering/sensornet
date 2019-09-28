@@ -103,7 +103,7 @@ class mrbusSimple(object):
       port = serial.Serial(port, 115200, timeout=.1, rtscts=True)
 
     self.serial = port
-
+    self.rxBuffer = bytearray()
     time.sleep(.1)
     while port.inWaiting():
       port.read(port.inWaiting())
@@ -155,37 +155,38 @@ class mrbusSimple(object):
 # This is ugly, but now works in Python3
 # Probably needs to be revisited and fixed up
   def getpkt(self):
-    incomingBytes = bytes(self.serial.readline())
-    if incomingBytes is None or len(incomingBytes) == 0:
-      return None
 
-    if incomingBytes[-1] not in frozenset([0x0A, 0x0D]):
-      self.log(1, 'E1<<<'+str(incomingBytes))
-      return None
-    
-    # Strip for bytes array
-    incomingBytes = incomingBytes.strip()
+    while True:
+      incoming = self.serial.read()
+      if incoming is None or len(incoming) == 0:
+        break
+       
+      incomingBytes = bytearray(incoming).strip(b'\r')
+      self.rxBuffer = self.rxBuffer + incomingBytes
+       
+    if b'\n' in self.rxBuffer:
+      # We've got complete lines, do something with them
+      eolIdx = self.rxBuffer.index(b'\n')
+      cmdStr = str(self.rxBuffer[0:eolIdx].decode('utf-8')).strip()
+      self.rxBuffer = self.rxBuffer[eolIdx+1:]
+      #print("Found command [%s]" % cmdStr)
 
-    # If it's an empty string, just go away
-    if len(incomingBytes) == 0:
-      return None
-
-    if incomingBytes == b'Ok':
-      self.log(0, '<<<'+str(incomingBytes))
-      return None
-
-    if len(incomingBytes)<2 or incomingBytes[0:2] != b'P:':
-      self.log(1, 'E3<<<'+str(incomingBytes[0:2]))
-      return None
-
-    d=[int(v,16) for v in incomingBytes[2:].split()]
-    if len(d)<6 or len(d)!=d[2]:
-      self.log(1, 'E4<<<'+str(incomingBytes))
-      return None
+      if cmdStr == "Ok":
+        return None
       
-    #self.log(0, '<<<'+str(incomingBytes))
-    return packet(d[0], d[1], d[5], d[6:])
+      if len(cmdStr)<2 or cmdStr[0:2] != 'P:':
+        self.log(1, 'E3<<<'+cmdStr)
+        return None
 
+      d=[int(v,16) for v in cmdStr[2:].split()]
+      if len(d)<6 or len(d)!=d[2]:
+        self.log(1, 'E4<<<'+cmdStr)
+        return None
+      
+      #self.log(0, '<<<'+str(incomingBytes))
+      return packet(d[0], d[1], d[5], d[6:])
+
+    return None
 
   def sendpkt(self, dest, data, src=None):
     if src == None:
@@ -478,9 +479,9 @@ class mrbus(object):
   def __init__(self, port, addr=None, logfile=None, logall=False, extra=False, busType='mrbus'):
     if type(port)==str:
       if busType == 'mrbus':
-         port = serial.Serial(port, 115200, rtscts=True)
+         port = serial.Serial(port, 115200, rtscts=True, timeout=.1)
       elif busType == 'mrbee':
-         port = serial.Serial(port, 115200, rtscts=True, stopbits=serial.STOPBITS_TWO)
+         port = serial.Serial(port, 115200, rtscts=True, stopbits=serial.STOPBITS_TWO, timeout=.1)
 
     if busType == 'mrbus':
        self.mrbs = mrbusSimple(port, addr, logfile, logall, extra)
