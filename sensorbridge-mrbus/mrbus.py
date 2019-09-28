@@ -152,26 +152,38 @@ class mrbusSimple(object):
 #    return self.linebuf.leftpop()
 
 
+# This is ugly, but now works in Python3
+# Probably needs to be revisited and fixed up
   def getpkt(self):
-    l = self.serial.readline()
-#      self.readline()
-    if not l:
+    incomingBytes = bytes(self.serial.readline())
+    if incomingBytes is None or len(incomingBytes) == 0:
       return None
-    if l[-1] != b'\n' and l[-1] != b'\r':
-      self.log(1, '<<<'+str(l))
+
+    if incomingBytes[-1] not in frozenset([0x0A, 0x0D]):
+      self.log(1, 'E1<<<'+str(incomingBytes))
       return None
-    l2=l.strip()
-    if l2 == 'Ok':
-      self.log(0, '<<<'+str(l))
+    
+    # Strip for bytes array
+    incomingBytes = incomingBytes.strip()
+
+    # If it's an empty string, just go away
+    if len(incomingBytes) == 0:
       return None
-    if len(l2)<2 or l2[0]!='P' or l2[1]!=':':
-      self.log(1, '<<<'+str(l))
+
+    if incomingBytes == b'Ok':
+      self.log(0, '<<<'+str(incomingBytes))
       return None
-    d=[int(v,16) for v in l2[2:].split()]
+
+    if len(incomingBytes)<2 or incomingBytes[0:2] != b'P:':
+      self.log(1, 'E3<<<'+str(incomingBytes[0:2]))
+      return None
+
+    d=[int(v,16) for v in incomingBytes[2:].split()]
     if len(d)<6 or len(d)!=d[2]:
-      self.log(1, '<<<'+str(l))
+      self.log(1, 'E4<<<'+str(incomingBytes))
       return None
-    self.log(0, '<<<'+str(l))
+      
+    #self.log(0, '<<<'+str(incomingBytes))
     return packet(d[0], d[1], d[5], d[6:])
 
 
