@@ -6,6 +6,10 @@ mqttServer = localhost
 mqttPort = 1883
 mqttReconnectInterval = 10
 
+#logFile = /home/ndholmes/data/projects/sensornet/sensorbridge-mrbus/sensorbridge-mrbus.log
+fileLogLevel = debug
+consoleLogLevel = warning
+
 # mrbusInterfaceType = ci2
 # mrbusPort = /dev/ttyUSB0
 

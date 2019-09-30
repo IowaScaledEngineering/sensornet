@@ -97,7 +97,7 @@ class node(object):
 
 
 class mrbusSimple(object):
-  def __init__(self, port, addr, logfile=None, logall=False, extra=False):
+  def __init__(self, port, addr, logger=None, extra=False):
 
     if type(port)==str:
       port = serial.Serial(port, 115200, timeout=.1, rtscts=True)
@@ -117,26 +117,17 @@ class mrbusSimple(object):
 
     self.pktlst=[]
 
-    self.logfile=logfile
-    self.logall=logall
-    self.log(0, "instantiated mrbusSimple from %s"%port.name)
+    self.logger = logger
+    if logger is None:
+      self.logger = logging.getLogger('mrbus')
+    
+    self.logger.info("Instantiated mrbusSimple from %s" % (port.name))
 
     self.addr=addr
 #    self.buf=deque()
 
   def disconnect(self):
      self.serial.close()
-
-  def log(self, error, msg):
-    if not self.logfile:
-      return
-    if not (error or self.logall):
-      return
-    if error:
-      s="Error:"
-    else:
-      s="  log:"
-    self.logfile.write(s+repr(msg)+'\n')
 
 #needs timeout functionality
 #  def readline(self)
@@ -175,15 +166,14 @@ class mrbusSimple(object):
         return None
       
       if len(cmdStr)<2 or cmdStr[0:2] != 'P:':
-        self.log(1, 'E3<<<'+cmdStr)
+        self.logger.error('E3<<<'+cmdStr)
         return None
 
       d=[int(v,16) for v in cmdStr[2:].split()]
       if len(d)<6 or len(d)!=d[2]:
-        self.log(1, 'E4<<<'+cmdStr)
+        self.logger.error('E4<<<'+cmdStr)
         return None
       
-      #self.log(0, '<<<'+str(incomingBytes))
       return packet(d[0], d[1], d[5], d[6:])
 
     return None
@@ -197,12 +187,12 @@ class mrbusSimple(object):
         d=ord(d)
       s+=" %02X"%(d&0xff)
     s+=";\r"
-    self.log(0, '>>>'+s)
+    self.logger.debug('>>>MRBUS ' +s)
     self.serial.write(s)
 
 
 class mrbeeSimple(object):
-  def __init__(self, port, addr, logfile=None, logall=False, extra=False):
+  def __init__(self, port, addr, logger=None, extra=False):
 
     self.rxBuffer = []
     self.rxExcapeNext = 0
@@ -222,26 +212,18 @@ class mrbeeSimple(object):
 
     self.pktlst=[]
 
-    self.logfile=logfile
-    self.logall=logall
-    self.log(0, "instantiated mrbeeSimple from %s" % port.name)
+    self.logger = logger
+    if logger is None:
+      self.logger = logging.getLogger('mrbus')
+
+    self.logger.info("Instantiated mrbeeSimple from %s" % port.name)
+
     self.addr=addr
-    
+   
     self.setLED('D6', False)
     self.setLED('D7', False)
     self.setLED('D8', False)
     self.setLED('D9', False)
-
-  def log(self, error, msg):
-    if not self.logfile:
-      return
-    if not (error or self.logall):
-      return
-    if error:
-      s="Error:"
-    else:
-      s="  log:"
-    self.logfile.write(s+repr(msg)+'\n')
 
   def disconnect(self):
     try:  # These very well might fail if the port went away
@@ -249,6 +231,7 @@ class mrbeeSimple(object):
        self.setLED('D7', False)
        self.setLED('D8', False)
        self.setLED('D9', False)  
+       time.sleep(0.1)
     except:
        pass
     self.serial.close()
@@ -299,7 +282,7 @@ class mrbeeSimple(object):
                                
              if 0xFF != pktChecksum:
                 # Error, conintue
-                self.log(0, "mrbee - checksum error - checksum is %02X" % (pktChecksum))
+                self.logger.error("mrbee - checksum error - checksum is %02X" % (pktChecksum))
                 continue      
 
              if 0x80 == self.rxBuffer[3]:
@@ -476,19 +459,25 @@ class mrbus(object):
   def disconnect(self):
      self.mrbs.disconnect()
 
-  def __init__(self, port, addr=None, logfile=None, logall=False, extra=False, busType='mrbus'):
+  def __init__(self, port, addr=None, logger=None, extra=False, busType='mrbus'):
     if type(port)==str:
       if busType == 'mrbus':
          port = serial.Serial(port, 115200, rtscts=True, timeout=.1)
       elif busType == 'mrbee':
          port = serial.Serial(port, 115200, rtscts=True, stopbits=serial.STOPBITS_TWO, timeout=.1)
 
+    self.logger = logger
+    if self.logger is None:
+       self.logger = logging.getLogger("mrbus")
+       self.logger.setLevel(logging.DEBUG)
+     
+
     if busType == 'mrbus':
-       self.mrbs = mrbusSimple(port, addr, logfile, logall, extra)
+       self.mrbs = mrbusSimple(port, addr, logger, extra)
        self.busType = 'mrbus'
        
     elif busType == 'mrbee':
-       self.mrbs = mrbeeSimple(port, addr, logfile, logall, extra)
+       self.mrbs = mrbeeSimple(port, addr, logger, extra)
        self.busType = 'mrbee'
 
     self.pktlst=[]
@@ -496,23 +485,23 @@ class mrbus(object):
     self.handlers=[]
     self.fakeLEDs={'D6':False, 'D7':False, 'D8':False, 'D9':False}
 
-    self.mrbs.log(0, "instantiated %s from %s" % (self.busType, port.name))
+    self.mrbs.logger.info("mrbus object instantiated [%s] from [%s]" % (self.busType, port.name))
 
     #find an address to use
     if addr==None:
-      self.mrbs.log(0, "finding address to use")
+      self.mrbs.logger.info("finding address to use")
       for addr in xrange(254, 0, -1):
         found = self.testnode(addr, replyto=0xff)
         if not found:
           break
       if found:
-        self.mrbs.log(1, "no available address found to use")
+        self.mrbs.logger.error("no available address found to use")
         raise Exception("no available address found to use")
      
     self.addr=addr
     self.mrbs.addr=addr
 
-    self.mrbs.log(0, "using address %d" % addr)
+    self.mrbs.logger.info("using address %d" % (addr))
 
   def setXbeeLED(self, ledRefdes, ledState):
     if self.busType == 'mrbee':
@@ -541,7 +530,7 @@ class mrbus(object):
 
   def install(self, handler, where=-1):
     #interpret index differently than list.insert().  -1 is at end, 0 is at front
-    self.mrbs.log(0, "install handler")
+    self.mrbs.logger.info("mrbus install handler")
     if where<0:
       if where == -1:
         where = len(self.handlers)
@@ -553,7 +542,7 @@ class mrbus(object):
     self.handlers.insert(where, (hint, handler))
 
   def remove(self, hint):
-    self.mrbs.log(0, "remove handler")
+    self.mrbs.logger.info("mrbus remove handler")
     self.handlers = [h for h in self.handlers if h[0]!=hint]
 
 
