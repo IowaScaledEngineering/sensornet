@@ -288,7 +288,7 @@ def main(mainParms):
                   name = None
                   
                if name is not None:
-                  channels[name] = {'number':number, 'energy':energy, 'real_power':"%d" % p, 'reactive_power':"%d" % q, 'volts':"%.1f" % v, 'pf':"%.2f" % pf }
+                  channels[name] = {'number':number, 'energy':energy, 'real_power':p, 'reactive_power':q, 'volts':v, 'pf':pf }
                
 
             sensors = ['phaseA_voltage', 'phaseB_voltage', 'phaseA_power', 'phaseB_power', 'phaseA_pf', 'phaseB_pf', 'voltage', 'power']
