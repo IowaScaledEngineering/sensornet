@@ -22,7 +22,9 @@
 #
 #*************************************************************************
 
-import sys
+import sys, os, time
+import logging
+import daemonize
 import time
 import traceback
 import socket
@@ -50,6 +52,19 @@ import pytz
 import atexit
 import mysql.connector as mysql
 
+
+import signal
+
+class SignalHandler():
+  def __init__(self):
+    self.terminate = False
+    self.reparse = False
+
+  def signalHandlerTerminate(self, signal, frame):
+    self.terminate = True
+   
+
+
 # TO DO
 # - Age out nodes that haven't been filled lately
 # - Implement maximum update rate
@@ -68,6 +83,7 @@ class ws_nodelist:
     
     SensorStatus.sensorStatus.lock.acquire()
     sensorStatus = SensorStatus.sensorStatus
+
     keys = sorted(sensorStatus.sensorNodeTree.keys())
     for key in keys:
       sensor = sensorStatus.sensorNodeTree[key]['data']
@@ -108,7 +124,8 @@ class ws_gethistory:
       startDT = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc) - datetime.timedelta(days=7)
       startTime = startDT.timestamp()
 
-    print("Starting history at %s" % startDT.isoformat())
+    logger = SensorStatus.sensorStatus.logger
+    logger.debug("Starting history at %s" % startDT.isoformat())
 
     # Get ending date/time
     try:
@@ -119,7 +136,8 @@ class ws_gethistory:
       endDT = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
       endTime = endDT.timestamp()
     
-    print("Ending history at %s" % endDT.isoformat())
+
+    logger.debug("Ending history at %s" % endDT.isoformat())
 
 
     resultsTimezone = SensorStatus.sensorStatus.defaultTimezone
@@ -138,7 +156,7 @@ class ws_gethistory:
     webDB = None
     if webdbConnectData['mysqlServer'] is not None and webdbConnectData['mysqlReadOnlyUsername'] is not None and webdbConnectData['mysqlReadOnlyPassword'] is not None:
       try:
-        webDB = mysqldb(webdbConnectData['mysqlServer'], webdbConnectData['mysqlPort'], webdbConnectData['mysqlReadOnlyUsername'], webdbConnectData['mysqlReadOnlyPassword'], webdbConnectData['mysqlDatabaseName'])
+        webDB = mysqldb(webdbConnectData['mysqlServer'], webdbConnectData['mysqlPort'], webdbConnectData['mysqlReadOnlyUsername'], webdbConnectData['mysqlReadOnlyPassword'], webdbConnectData['mysqlDatabaseName'], logger)
         
         if not webDB.conn.is_connected():
           raise InterfaceError
@@ -155,11 +173,10 @@ class ws_gethistory:
             outputlist.append(element)
               
           except Exception as e:
-            print("Database record [%s]=>[%s] failed\n" % (timestamp, value))
-            print(e)
+            logger.exception("Database record [%s]=>[%s] failed\n" % (timestamp, value))
         cursor.close()
       except Exception as e:
-        print(e)
+        logger.exception("Failed DB connection")
       finally:
         try:
           webDB.conn.close()
@@ -219,34 +236,37 @@ def runWebserver(httpserver, app, serverAddress):
   return httpserver.runsimple(app.wsgifunc(), serverAddress)
 
 def mqtt_onConnect(client, userdata, flags, rc):
+  logger = userdata['logger']
+
   if rc == 0:
     # Successful Connection
-    print("Successful MQTT Connection")
+    logger.info("Successful MQTT Connection")
     client.connected_flag = True
   elif rc == 1:
-    print("ERROR: MQTT Incorrect Protocol Version")
+    logger.error("ERROR: MQTT Incorrect Protocol Version")
     client.connected_flag = False
   elif rc == 2:
-    print("ERROR: MQTT Invalid Client ID")
+    logger.error("ERROR: MQTT Invalid Client ID")
     client.connected_flag = False
   elif rc == 3:
-    print("ERROR: MQTT Broker Unavailable")
+    logger.error("ERROR: MQTT Broker Unavailable")
     client.connected_flag = False
   elif rc == 4:
-    print("ERROR: MQTT Bad Username/Password")
+    logger.error("ERROR: MQTT Bad Username/Password")
     client.connected_flag = False
   elif rc == 5:
-    print("ERROR: MQTT Not Authorized")
+    logger.error("ERROR: MQTT Not Authorized")
     client.connected_flag = False
   else:
-    print("ERROR: MQTT Other Failure %d" % (rc))
+    logger.error("ERROR: MQTT Other Failure %d" % (rc))
     client.connected_flag = False
   
   mqttClient.subscribe("#", qos=1)
 
 def mqtt_onDisconnect(client, userdata, rc):
-   print("MQTT disconnected - reason: [%s]" % (str(rc)))
-   client.connected_flag = False
+  logger = userdata['logger']
+  logger.warning("MQTT disconnected - reason: [%s]" % (str(rc)))
+  client.connected_flag = False
 
 
 class GlobalConfiguration:
@@ -278,15 +298,60 @@ class GlobalConfiguration:
       value = defaultValue
     return value
 
+  def logLevelToVal(self, logLevel, default):
+    logLevelValues = { 'error':logging.ERROR, 'warning':logging.WARNING, 'info':logging.INFO, 'debug':logging.DEBUG }      
+    logLevel = logLevel.lower()
+    if logLevel in logLevelValues:
+      return logLevelValues[logLevel]
+    return default
 
-  def loadConfiguration(self, confFilename):
+
+  def setupLogger(self, logFile, consoleLogLevel, fileLogLevel):
+    self.logger = logging.getLogger('main')
+    self.logger.setLevel(logging.DEBUG)
+    fh = logging.FileHandler(self.configOpts['logFile'])
+    fh.setLevel(self.logLevelToVal(fileLogLevel, logging.DEBUG))
+      
+    ch = logging.StreamHandler()
+    ch.setLevel(self.logLevelToVal(consoleLogLevel, logging.DEBUG))
+      
+    logFileFormatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    fh.setFormatter(logFileFormatter)
+    ch.setFormatter(logFileFormatter)
+      
+    self.logger.addHandler(fh)
+    self.logger.addHandler(ch)
+
+
+  def loadConfiguration(self, confFilename, isDaemon=False, logFile=None, workingDir='.'):
     # Reinitialize
     self. __init__()
       
-    print("Reading configuration file [%s]" % (confFilename))
+    if not isDaemon:
+      print("Reading configuration file [%s]" % (confFilename))
+
     parser = configparser.SafeConfigParser()
     parser.read(confFilename)
-    print("Configuration file successfully read")
+
+    if not isDaemon:
+      print("Configuration file successfully read")
+
+    if isDaemon:
+      logFileDefault = os.path.abspath('/tmp/sensornexus.log')
+    else:
+      logFileDefault = os.path.abspath('%s/sensornexus.log' % (workingDir))
+
+    if logFile is not None:
+      self.configOpts['logFile'] = os.path.abspath(logFile)
+    else:
+      self.configOpts['logFile'] = self.parserGetWithDefault(parser, "global", "logFile", logFileDefault)
+
+    self.configOpts['consoleLogLevel'] = self.parserGetWithDefault(parser, "global", "consoleLogLevel", "error").lower()
+    self.configOpts['fileLogLevel'] = self.parserGetWithDefault(parser, "global", "fileLogLevel", "debug").lower()
+    self.setupLogger(self.configOpts['logFile'], self.configOpts['consoleLogLevel'], self.configOpts['fileLogLevel'])
+
+    self.logger.info("---------------------------------------------------------------------------")
+    self.logger.info("Logging startup at %s", datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc).isoformat())
 
     # Get global options
     self.configOpts['mqttBroker'] = self.parserGetWithDefault(parser, "global", "mqttServer", "localhost")
@@ -302,7 +367,7 @@ class GlobalConfiguration:
     try:
       self.configOpts['defaultTimezone'] = pytz.timezone(zone)
     except:
-      print("Bad timezone [%s], defaulting to UTC" % self.configOpts['defaultTimezone'])
+      self.logger.error("Bad timezone [%s], defaulting to UTC" % self.configOpts['defaultTimezone'])
       self.configOpts['defaultTimezone'] = datetime.timezone.utc
 
     self.configOpts['mysqlUsername'] = self.parserGetWithDefault(parser, "global", "mysqlUsername", None)
@@ -333,13 +398,13 @@ class GlobalConfiguration:
     sections = parser.sections()
     REsensor = re.compile("(?P<type>[a-zA-Z0-9]+):(?P<sensorName>[a-zA-Z0-9_/]+)")
     for section in sections:
-      print("Getting sensors from configuration")
+      self.logger.info("Getting sensors from configuration")
       match = REsensor.match(section)
       
-      if match is None:
-        print("Ignoring section [%s]" % (section))
+      if match is None and section is not "global":
+        self.logger.warning("Ignoring section [%s]" % (section))
       elif match.groupdict()['type'] == 'sensor':
-        print("Found sensor named [%s]" % (match.groupdict()['sensorName']))
+        self.logger.info("Found sensor named [%s]" % (match.groupdict()['sensorName']))
         sensorName = match.groupdict()['sensorName']
 
         sensor = { 'name':sensorName }
@@ -356,7 +421,7 @@ class GlobalConfiguration:
         sensor['memoryLogInterval'] = self.parserGetIntWithDefault(parser, section, "memoryLogInterval", self.configOpts['defaultMemoryLogInterval'])
         
         if sensor['name'] in self.configOpts['sensors']:
-          print("ERROR!  A sensor named %s is already configured" % (sensor['name']))
+          self.logger.error("ERROR!  A sensor named %s is already configured" % (sensor['name']))
         else:
           self.configOpts['sensors'][sensor['name']] = sensor
 
@@ -378,24 +443,25 @@ class mysqldb(object):
   nameIDCache = { }
   lock = threading.Lock()
   
-  def __init__(self, hostname, port, username, password, dbname):
+  def __init__(self, hostname, port, username, password, dbname, logger):
     try:
       self.hostname = hostname
       self.port = port
       self.username = username
       self.password = password
       self.dbname = dbname
+      self.logger = logger
       self.reinit()
     except:
       pass
       
   def reinit(self):
     try:
-      print("Trying to connect to mysql")
+      self.logger.info("Trying to connect to mysql")
       self.conn = mysql.connect(host=self.hostname, port=self.port, user=self.username, passwd=self.password, database=self.dbname)
-      print("mysql connect success")
+      self.logger.info("mysql connect success")
     except Exception as e:
-      print("mysql connect FAILURE")
+      self.logger.exception("mysql connect FAILURE")
       pass
       
   def getNameID(self, nameStr):
@@ -405,21 +471,18 @@ class mysqldb(object):
     
     if not self.conn.is_connected():
       # Ping will automagically attempt reconnections
-      #print("mysql not connected, trying ping to restart")
       try:
         self.conn.ping(reconnect=True, attempts=2, delay=1)
       except InterfaceError:
         pass
     
     if not self.conn.is_connected():
-      #print("still not connected, dying")
       raise InterfaceError
     
     retval = 0
     
     try:
       cursor = self.conn.cursor()
-      #print("starting new select")
       query = "SELECT nameID FROM SensorNames WHERE sensorName=%s;"
       cursor.execute(query, (nameStr,))
       
@@ -430,7 +493,6 @@ class mysqldb(object):
 
 
       if 0 == retval:
-        #print("name doesn't exist, do something")
         query = "INSERT INTO SensorNames (nameID,sensorName) VALUES (0,%s);"
         cursor.execute(query, (nameStr,))
         self.conn.commit()
@@ -449,21 +511,20 @@ class mysqldb(object):
         raise InterfaceError
       
     except Exception as e:
-      print("Exception in getNameID")
-      print(e)
+      self.logger.exception("Exception in getNameID")
       raise InterfaceError
 
   def insertSensorData(self, nameStr, timestamp, datavalue):
     if not self.conn.is_connected():
       # Ping will automagically attempt reconnections
-      print("mysql not connected, trying ping to restart")
+      self.logger.info("mysql not connected, trying ping to restart")
       try:
         self.conn.ping(reconnect=True, attempts=2, delay=1)
       except InterfaceError:
         pass
     
     if not self.conn.is_connected():
-      print("still not connected, dying")
+      self.logger.error("mysql still not connected, dying")
       raise InterfaceError
     
     nameID = self.getNameID(nameStr)
@@ -479,21 +540,20 @@ class mysqldb(object):
       cursor.close()
       
     except Exception as e:
-      print("Exception in insertSensorData")
-      print(e)
+      self.logger.exception("Exception in insertSensorData")
       raise InterfaceError
 
 def mqtt_onMessage(client, userdata, message):
   payload = message.payload.decode()
   sensorName = message.topic
   lastUpdate = time.time()
-  
-  print("Message [%s]: %s" % (sensorName, payload))
+  logger = userdata['logger']
+  logger.debug("Message [%s]: %s" % (sensorName, payload))
 
   try:
     decodedValues = json.loads(payload)
   except:
-    print("Bogus message, json did not parse, ignoring")
+    logger.warning("Bogus message, json did not parse, ignoring")
     return
 
   # We only accept update type packets
@@ -512,13 +572,13 @@ def mqtt_onMessage(client, userdata, message):
       measurementTime = measurementDT.timestamp()
     except:
       # Bad time, don't store
-      print("Bogus timestamp")
+      logger.error("Bogus timestamp [%s]", decodedValues['time'])
       return
   else:
     measurementDT = datetime.datetime.utcnow()
     measurementTime = measurementDT.timestamp()
 
-  print("Inserting data - [%s]=>%s" % (sensorName, decodedValues));
+  logger.debug("Inserting data - [%s]=>%s" % (sensorName, decodedValues));
 
   thisEntry = {'value':decodedValues['value'], 'time':measurementTime }
 
@@ -536,7 +596,7 @@ def mqtt_onMessage(client, userdata, message):
       dbLog = userdata['gConf'].configOpts['defaultDatabaseLogEnable']
       dbMinInterval = userdata['gConf'].configOpts['defaultDatabaseLogInterval']
   except Exception as e:
-    print(e)
+    logger.exception("Error getting storage parameters in mqtt_onMessage")
 
   # Make sure sensor is in the node tree, and if not, add it.
   # This saves a bunch of spaghetti logic later on in the data storage and DB code
@@ -573,7 +633,7 @@ def mqtt_onMessage(client, userdata, message):
         mysql = userdata['dbConnection']
         mysql.insertSensorData(sensorName, measurementDT, decodedValues['value'])
       except:
-        print("Error: failed DB stuff, going on")
+        logger.error("Error: failed DB stuff, going on")
         # We didn't write, so don't update the time
         timeToWriteToDB = False 
 
@@ -599,17 +659,20 @@ def mqtt_onMessage(client, userdata, message):
       sensorNodeTree[message.topic]['data'].pop()
       
   except Exception as e:
-    print("mqtt_onMessage got exception")
-    print(e)
+    logger.exception("mqtt_onMessage got exception")
   finally:
     userdata['sensorStatus'].lock.release()
 
 
-def main(configFile):
+def main(mainParms):
+
   # Global sensor status object - jointly used by MQTT and webserver, must be locked
   sensorStatus = SensorStatus.sensorStatus
   gConf = GlobalConfiguration()
-  gConf.loadConfiguration(configFile)
+  gConf.loadConfiguration(mainParms['configFile'], logFile=mainParms['logFile'], workingDir=mainParms['startupDirectory'], isDaemon=mainParms['isDaemon'])
+
+  signalHandler = SignalHandler()
+
   sensorStatus.defaultTimezone = gConf.configOpts['defaultTimezone']
   sensorStatus.webdbConnectData['mysqlServer'] = gConf.configOpts['mysqlServer']
   sensorStatus.webdbConnectData['mysqlPort'] = gConf.configOpts['mysqlPort']
@@ -617,12 +680,16 @@ def main(configFile):
   sensorStatus.webdbConnectData['mysqlReadOnlyPassword'] = gConf.configOpts['mysqlReadOnlyPassword']
   sensorStatus.webdbConnectData['mysqlDatabaseName'] = gConf.configOpts['mysqlDatabaseName']
   
+  logger = gConf.logger
   
   try:
+    logger.info("Loading old sensor pickle")
     lastNodeTree = sensorsRetrieveOnStartup( gConf.configOpts['sensorDataFile'] )
     sensorStatus.sensorNodeTree = lastNodeTree
   except:
     pass
+
+  sensorStatus.logger = logger
     
   atexit.register(sensorsSaveOnExit, sensorNodeTree=sensorStatus.sensorNodeTree, pickleFilename=gConf.configOpts['sensorDataFile'] )
   
@@ -632,15 +699,15 @@ def main(configFile):
   mqttDB = None
   if gConf.configOpts['mysqlServer'] is not None and gConf.configOpts['mysqlUsername'] is not None and gConf.configOpts['mysqlPassword'] is not None:
     try:
-      mqttDB = mysqldb(gConf.configOpts['mysqlServer'], gConf.configOpts['mysqlPort'], gConf.configOpts['mysqlUsername'], gConf.configOpts['mysqlPassword'], gConf.configOpts['mysqlDatabaseName'])
-      print("Database connection succeeded")
+      mqttDB = mysqldb(gConf.configOpts['mysqlServer'], gConf.configOpts['mysqlPort'], gConf.configOpts['mysqlUsername'], gConf.configOpts['mysqlPassword'], gConf.configOpts['mysqlDatabaseName'], logger)
+      logger.info("Database connection succeeded")
     except:
-      print("Database connection failed")
+      logger.error("Database connection failed")
       mqttDB = None
 
 
   mqtt.Client.connected_flag = False
-  mqttClient = mqtt.Client(userdata={'sensorStatus':sensorStatus, 'gConf':gConf, 'dbConnection':mqttDB})
+  mqttClient = mqtt.Client(userdata={'sensorStatus':sensorStatus, 'gConf':gConf, 'dbConnection':mqttDB, 'logger':logger})
   mqttClient.on_connect=mqtt_onConnect
   mqttClient.on_disconnect=mqtt_onDisconnect
   mqttClient.on_message = mqtt_onMessage
@@ -649,12 +716,22 @@ def main(configFile):
   
 
   thread.start_new_thread(runWebserver, (httpserver, app, (gConf.configOpts['webserviceIP'], gConf.configOpts['webservicePort'])))
-  print("Webserver started")
+  logger.info("Webserver started")
 
   lastMQTTConnectAttempt = None
 
-  while True:
-    try:
+
+  signal.signal(signal.SIGINT, signalHandler.signalHandlerTerminate)
+  signal.signal(signal.SIGTERM, signalHandler.signalHandlerTerminate)
+
+  logger.info("Starting run phase")
+
+  try:
+    while True:
+      # If we've gotten a signal to die, go do it
+      if signalHandler.terminate:
+        raise KeyboardInterrupt
+
       # Reconnect MQTT client if necessary
       if mqttClient.connected_flag is False and (lastMQTTConnectAttempt is None or lastMQTTConnectAttempt + gConf.configOpts['mqttReconnectInterval'] < time.time()):
         # We don't have an MQTT client and need to try reconnecting
@@ -663,7 +740,7 @@ def main(configFile):
           mqttClient.loop_start()
           mqttClient.connect(gConf.configOpts['mqttBroker'], gConf.configOpts['mqttPort'], keepalive=60)
           while not mqttClient.connected_flag: 
-            time.sleep(2) # Wait for callback to fire
+            time.sleep(0.01) # Wait for callback to fire
 
           if mqttClient.connected_flag is True:
             mqttClient.subscribe("#", qos=1)
@@ -681,46 +758,71 @@ def main(configFile):
 
       
       
-    except KeyboardInterrupt:
-      print("User requested program termination, exiting...")
-      mqttClient.loop_stop()
+  except KeyboardInterrupt:
+    logger.warning("User requested program termination, exiting...")
+    mqttClient.loop_stop()
       
-      try:
-        if mqttDB is not None:
-          mqttDB.close()
-      except:
-        pass
+    try:
+      if mqttDB is not None:
+        mqttDB.close()
+    except:
+      pass
       
+    if httpserver.server:
+      httpserver.server.stop()
+      httpserver.server = None
       
-      if httpserver.server:
-        httpserver.server.stop()
-        httpserver.server = None
-      
-      mqttClient.disconnect()
-      sys.exit()
+    mqttClient.disconnect()
+    sys.exit()
 
-    except Exception as e:
-      print("Unhandled exception")
-      print(e)
-      mqttClient.loop_stop()
+  except Exception as e:
+    logger.exception("Main loop exception!")
+    mqttClient.loop_stop()
 
-      try:
-        if mqttDB is not None:
-          mqttDB.close()
-      except:
-        pass
+    try:
+      if mqttDB is not None:
+        mqttDB.close()
+    except:
+      pass
 
-      if httpserver.server:
-        httpserver.stop()
-        httpserver.server = None
+    if httpserver.server:
+      httpserver.stop()
+      httpserver.server = None
       
-      mqttClient.disconnect()
-      raise
+    mqttClient.disconnect()
+    raise
  
 if __name__== "__main__":
   ap = argparse.ArgumentParser()
-  ap.add_argument("-c", "--config", help="specify file with configuration", type=str)
-  ap.set_defaults(config="sensornexus.cfg")
+  ap.add_argument("-c", "--config", help="specify file with configuration", type=str, default='sensornexus.cfg')
+  ap.add_argument("-d", "--daemon", help="Daemon control:  start / stop / restart", type=str, default=None)
+  ap.add_argument("-p", "--pidfile", help="Daemon pid file", type=str, default='/tmp/sensornexus.pid')
+  ap.add_argument("-l", "--logfile", help="Log file", type=str, default=None)
   args = ap.parse_args()
-  main(args.config)
+
+  pwd = os.getcwd()
+  configFileName = os.path.basename(args.config)
+  configDir = os.path.dirname(args.config)
+  if configDir is None or len(configDir) == 0:
+    configDir = pwd
+  configFile = "%s/%s" % (configDir, configFileName)
+   
+  isDaemon = False
+
+  if args.daemon is not None:
+    pidfile=args.pidfile
+    daemonize.startstop(action=args.daemon, stdout='/dev/null', pidfile=pidfile)
+    isDaemon = True
+
+  mainParms = {'startupDirectory': pwd, 'configFile': configFile, 'isDaemon':isDaemon, 'logFile':args.logfile }
+  
+  try:
+    main(mainParms)
+  except Exception as e:
+    print(e)
+    if args.daemon is not None:
+      try:
+        os.remove(pidfile)
+      except IOError:
+        pass
 

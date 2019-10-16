@@ -1,0 +1,22 @@
+[Unit]
+Description=Sensornet Nexus Service
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=forking
+Restart=always
+RestartSec=1
+User=house
+
+Environment="PYDIR=/home/house/sensors/sensornexus/"
+Environment="PIDFILE=/home/house/sensors/run/sensornexus.pid"
+Environment="CONF=/home/house/sensors/sensornexus/sensornexus.cfg"
+
+PIDFile=/home/house/sensors/run/sensornexus.pid
+ExecStart=/usr/bin/env python3 ${PYDIR}/sensorbridge-neurio.py --daemon start --pidfile ${PIDFILE} --config ${CONF}
+ExecReload=/usr/bin/env python3 ${PYDIR}/sensorbridge-neurio.py --daemon restart --pidfile ${PIDFILE} --config ${CONF}
+ExecStop=/usr/bin/env python3 ${PYDIR}/sensorbridge-neurio[A.py --daemon stop --pidfile ${PIDFILE} --config ${CONF}
+
+[Install]
+WantedBy=multi-user.target
