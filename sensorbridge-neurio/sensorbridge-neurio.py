@@ -224,7 +224,7 @@ def main(mainParms):
                mqttClient.loop_start()
                mqttClient.connect(gConf.configOpts['mqttBroker'], gConf.configOpts['mqttPort'], keepalive=60)
                while not mqttClient.connected_flag: 
-                  time.sleep(2) # Wait for callback to fire
+                  time.sleep(0.01) # Wait for callback to fire
                mqttClient.loop_stop()
             except(KeyboardInterrupt):
                raise
@@ -291,7 +291,7 @@ def main(mainParms):
                   channels[name] = {'number':number, 'energy':energy, 'real_power':p, 'reactive_power':q, 'volts':v, 'pf':pf }
                
 
-            sensors = ['phaseA_voltage', 'phaseB_voltage', 'phaseA_watts', 'phaseB_watts', 'phaseA_pf', 'phaseB_pf', 'voltage', 'power']
+            sensors = ['phaseA_voltage', 'phaseB_voltage', 'phaseA_power', 'phaseB_power', 'phaseA_pf', 'phaseB_pf', 'voltage', 'power']
 
             value = "0"
             units = 'unknown'
@@ -321,6 +321,9 @@ def main(mainParms):
                elif sensor == 'power':
                   value = channels['phaseA']['real_power'] + channels['phaseB']['real_power']
                   units = 'watts'            
+               else:
+                  logging.error("Unknown sensor name [%s]" % (sensor))
+
 
                try:
                   topic = "%s/%s/%s" % (gConf.configOpts['locale'], gConf.configOpts['neurioName'], sensor)
