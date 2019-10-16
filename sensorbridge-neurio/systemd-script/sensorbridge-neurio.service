@@ -1,0 +1,22 @@
+[Unit]
+Description=Neurio-Sensornet Bridge Service
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=forking
+Restart=always
+RestartSec=1
+User=ndholmes
+
+Environment="PYDIR=/home/ndholmes/data/projects/sensornet/sensorbridge-neurio/"
+Environment="PIDFILE=/tmp/sensorbridge-neurio.pid"
+Environment="CONF=/home/ndholmes/data/projects/sensornet/sensorbridge-neurio/sensorbridge-neurio.cfg"
+
+PIDFile=${PIDFILE}
+ExecStart=/usr/bin/env python3 ${PYDIR}/sensorbridge-neurio.py --daemon start --pidfile ${PIDFILE} --config ${CONF}
+ExecReload=/usr/bin/env python3 ${PYDIR}/sensorbridge-neurio.py --daemon restart --pidfile ${PIDFILE} --config ${CONF}
+ExecStop=/usr/bin/env python3 ${PYDIR}/sensorbridge-neurio[A.py --daemon stop --pidfile ${PIDFILE} --config ${CONF}
+
+[Install]
+WantedBy=multi-user.target
