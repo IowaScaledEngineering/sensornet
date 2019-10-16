@@ -1,0 +1,9 @@
+[global]
+locale = house
+
+mqttServer = localhost
+mqttPort = 1883
+mqttReconnectInterval = 10
+neurioAddress = pwrview-24589.drgw.net
+neurioName = main_panel
+postInterval = 1
