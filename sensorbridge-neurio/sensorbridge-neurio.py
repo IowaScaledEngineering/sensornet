@@ -304,10 +304,10 @@ def main(mainParms):
                   value = "%.1f" % (channels['phaseB']['volts'])
                   units = 'volts'               
                elif sensor == 'phaseA_power':
-                  value = channels['phaseA']['real_power']
+                  value = "%d" % channels['phaseA']['real_power']
                   units = 'watts'
                elif sensor == 'phaseB_power':
-                  value = channels['phaseB']['real_power']
+                  value = "%d" % channels['phaseB']['real_power']
                   units = 'watts'
                elif sensor == 'phaseA_pf':
                   value = "%.2f" % (channels['phaseA']['pf'])
@@ -319,7 +319,7 @@ def main(mainParms):
                   value = "%.1f" % (channels['phaseA']['volts'] + channels['phaseB']['volts'])
                   units = 'volts'
                elif sensor == 'power':
-                  value = channels['phaseA']['real_power'] + channels['phaseB']['real_power']
+                  value = "%d" % channels['phaseA']['real_power'] + channels['phaseB']['real_power']
                   units = 'watts'            
                else:
                   logging.error("Unknown sensor name [%s]" % (sensor))
