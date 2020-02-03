@@ -116,8 +116,9 @@ class ws_gethistory:
     outputlist = [ ]
     webdbConnectData = SensorStatus.sensorStatus.webdbConnectData
     # Get starting date/time
+
     try:
-      startDT = iso8601.parse_date(args['start']).astimezone(tzinfo=datetime.timezone.utc)
+      startDT = iso8601.parse_date(args['start']).astimezone(tz=datetime.timezone.utc)
       startTime = startDT.timestamp()
     except:
       # Assume 1 week of data
