@@ -96,7 +96,7 @@ $plot->setMxtics($mxtics);
 //$plot->setYRange(32, 100);
 $plot->setYRange($ymin, $ymax);
 
-$deltaHours = sprintf("now +%d hours", $hours/48);
+$deltaHours = sprintf("now +%d minutes", $hours*60/48);
 $dt = new DateTime($deltaHours, new DateTimeZone("UTC"));
 $endTime = $dt->format(DateTime::ISO8601);
 $dt->setTimezone(new DateTimeZone('America/Denver'));
