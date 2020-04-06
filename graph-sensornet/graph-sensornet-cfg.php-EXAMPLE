@@ -1,0 +1,8 @@
+<?php
+
+$sensorPrettyNames = array();
+
+$sensorPrettyNames += array('home/livingRoom'         => "Living Room");
+$sensorPrettyNames += array('home/Office'             => "Office");
+
+?>
