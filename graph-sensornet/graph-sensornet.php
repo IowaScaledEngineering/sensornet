@@ -18,10 +18,10 @@ if (key_exists('ymin', $_REQUEST))
   $ymin = preg_replace('/[^0-9\-]+/', '', $_REQUEST['ymin']);
 
 if (key_exists('ymax', $_REQUEST))
-  $ymax = preg_replace('/[^0-9\-]+/', '', $_REQUEST['ymax']);
+  $ymax = preg_replace('/[^0-9\-.]+/', '', $_REQUEST['ymax']);
 
 if (key_exists('hours', $_REQUEST))
-  $hours = preg_replace('/[^0-9\-]+/', '', $_REQUEST['hours']);
+  $hours = preg_replace('/[^0-9\-.]+/', '', $_REQUEST['hours']);
 
 if (key_exists('showFreezing', $_REQUEST))
   $showFreezing = True;
@@ -52,26 +52,27 @@ $plot = new GnuPlot;
 
 $plot->setTimeFormatString("%H:%M");
 
-if ($hours > 24)
+if ($hours > 168)
 {
-#  $plot->setTimeFormatString("%m/%d %H:%M");
   $plot->setTimeFormatString("%b %d");
-#  $plot->setXLabel("Date");
+  $xtics = 604800;
+  $mxtics = 4;
+}
+else if ($hours > 24)
+{
+  $plot->setTimeFormatString("%b %d");
   $xtics = 86400;
   $mxtics = 4;
 }
 else if ($hours > 4)
 {
-#  $plot->setTimeFormatString("%m/%d %H:%M");
   $plot->setTimeFormatString("%b %d  %H:%M");
-#  $plot->setXLabel("Date/Time");
   $xtics = 14400;
   $mxtics = 2;
 }
 else
 {
   $plot->setTimeFormatString("%H:%M");
-#  $plot->setXLabel("Time");
   $xtics = 14400;
   $mxtics = 2;
 }
@@ -139,12 +140,21 @@ foreach($sensorArray as $sensorName)
   $sensorPath = implode("/", array_slice($explodedSensorName, 0, -1));
   if($sensorPrettyNames[$sensorPath])
   {
-    $plot->setTitle($arrayIdx, $sensorPrettyNames[$sensorPath]);
+    $title = $sensorPrettyNames[$sensorPath];
   }
   else 
   {
-    $plot->setTitle($arrayIdx, $sensorName);
+    $title = $sensorName;
   }
+
+  if(empty($jsdata))
+  {
+    // Assign dummy value if empty
+    $jsdata = json_decode('[{"time": "1900-01-01T00:00:00-00:00", "value": "0"}]');
+    $title .= " [*]";
+  }
+
+  $plot->setTitle($arrayIdx, $title);
 
   foreach($jsdata as $datapt)
   {
