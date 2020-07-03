@@ -70,10 +70,16 @@ else if ($hours > 4)
   $xtics = 14400;
   $mxtics = 2;
 }
+else if ($hours > 1)
+{
+  $plot->setTimeFormatString("%H:%M");
+  $xtics = 1800;
+  $mxtics = 2;
+}
 else
 {
   $plot->setTimeFormatString("%H:%M");
-  $xtics = 14400;
+  $xtics = 300;
   $mxtics = 2;
 }
 $plot->setXTimeFormat("%Y:%m:%d:%H:%M:%S");
