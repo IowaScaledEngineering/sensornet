@@ -240,7 +240,7 @@ class globalConfiguration:
                sensorDataType =  parser.get(section, "dataType")
                sensorDataStart = parser.get(section, "dataStart")
             except:
-               logging.error("Bad sensor data type for [%s], skipping" % (section))
+               logger.error("Bad sensor data type for [%s], skipping" % (section))
                continue
 
 
@@ -469,7 +469,7 @@ def main(mainParms):
 
                   try:
                      displayValue = dataFormat % (value)
-                     logging.debug("Publishing [%s] to topic [%s]" % (displayValue, topic))
+                     logger.debug("Publishing [%s] to topic [%s]" % (displayValue, topic))
 
                      updateMessage = {
                         'type':'update',
