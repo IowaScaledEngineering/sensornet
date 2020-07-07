@@ -91,6 +91,24 @@ class ws_nodelist:
     SensorStatus.sensorStatus.lock.release()
     return output
 
+class ws_gethelp:
+  def GET(self):
+    output = """
+<html><head><title>SensorNet Web Service Help</title></head>
+<body>
+Available web service calls:<br/>
+<ul>
+<li>/ - This help screen</li>
+<li>/nodelist - Gets list of current sensor nodes</li>
+<li>/getval/(sensorname) - Gets current value</li>
+<li>/gethistory/(sensorname)?start=(iso8601 start time)&end=(iso8601 end time) - Gets historic values over range start to end</li>
+</ul>
+</html>
+    """
+    args = web.input()
+    return output
+
+
 class ws_getval:
   def GET(self, path):
     output = ""
@@ -229,7 +247,8 @@ class ws_gethistory:
 urlHandlers = (
   '/nodelist', 'ws_nodelist',
   '/getval/(.*)', 'ws_getval',
-  '/gethistory/(.*)', 'ws_gethistory'
+  '/gethistory/(.*)', 'ws_gethistory',
+  '/', 'ws_gethelp'
 )
 
 
@@ -355,7 +374,7 @@ class GlobalConfiguration:
     self.logger.info("Logging startup at %s", datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc).isoformat())
 
     # Get global options
-    self.configOpts['mqttBroker'] = self.parserGetWithDefault(parser, "global", "mqttServer", "localhost")
+    self.configOpts['mqttBroker'] = self.parserGetWithDefault(parser, "global", "mqttBroker", "localhost")
     self.configOpts['mqttPort'] = self.parserGetIntWithDefault(parser, "global", "mqttPort", 1883)
     self.configOpts['mqttUsername'] = self.parserGetWithDefault(parser, "global", "mqttUsername", None)
     self.configOpts['mqttPassword'] = self.parserGetWithDefault(parser, "global", "mqttPassword", None)
@@ -470,6 +489,15 @@ class mysqldb(object):
     if nameStr in self.nameIDCache:
       return self.nameIDCache[nameStr]
     
+    if self.conn is None:
+      self.logger.info("mysql never connected in getNameID() - trying to connect")
+      self.reinit()
+
+    if self.conn is None:
+      self.logger.info("mysql never connected - failed to connect")
+      raise InterfaceError
+
+
     if not self.conn.is_connected():
       # Ping will automagically attempt reconnections
       try:
@@ -516,12 +544,21 @@ class mysqldb(object):
       raise InterfaceError
 
   def insertSensorData(self, nameStr, timestamp, datavalue):
+    if self.conn is None:
+      self.logger.info("mysql never connected in insertSensorData() - trying to connect")
+      self.reinit()
+
+    if self.conn is None:
+      self.logger.info("mysql never connected - failed to connect")
+      raise InterfaceError
+
     if not self.conn.is_connected():
       # Ping will automagically attempt reconnections
       self.logger.info("mysql not connected, trying ping to restart")
       try:
         self.conn.ping(reconnect=True, attempts=2, delay=1)
       except InterfaceError:
+        self.logger.info("mysql not connected - ping failed to restart")
         pass
     
     if not self.conn.is_connected():
@@ -549,7 +586,6 @@ def mqtt_onMessage(client, userdata, message):
   sensorName = message.topic
   lastUpdate = time.time()
   logger = userdata['logger']
-  logger.debug("Message [%s]: %s" % (sensorName, payload))
 
   try:
     decodedValues = json.loads(payload)
@@ -706,7 +742,7 @@ def main(mainParms):
       logger.error("Database connection failed")
       mqttDB = None
 
-
+  logger.info("Trying MQTT connection to (%s/%d)" % (gConf.configOpts['mqttBroker'], gConf.configOpts['mqttPort']))
   mqtt.Client.connected_flag = False
   mqttClient = mqtt.Client(userdata={'sensorStatus':sensorStatus, 'gConf':gConf, 'dbConnection':mqttDB, 'logger':logger})
   mqttClient.on_connect=mqtt_onConnect
