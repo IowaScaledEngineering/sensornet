@@ -405,6 +405,14 @@ def main(mainParms):
             
             updateTime = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc).isoformat()
 
+            rawTopic = "%s/%s/raw" % (gConf.configOpts['locale'], gConf.configOpts['sourceName'])
+            
+            rawMessage = "%s:  %s" % (updateTime, pkt)
+
+            if mqttClient.connected_flag is True:
+               mqttClient.publish(topic=rawTopic, payload=rawMessage)
+
+
             if pkt.src in gConf.sensors:
                for sensor in gConf.sensors[pkt.src]:
                   if sensor['sensorPktType'] is not pkt.cmd:
