@@ -108,6 +108,26 @@ def float_from_unsigned16(n):
 
   return (-1)**s * (1 + m / 2**10) * 2**(e - 15)
 
+def float_from_unsigned32(n):
+  assert 0 <= n < 2**32
+  s = n >> 31
+  e = (n & 0x7f800000) >> 23
+  m = n & 0x007FFFFF
+
+  if e == 0:
+    if m == 0:
+      return -0.0 if s else 0.0
+    else:
+      return (-1)**s * m / 2**23 * 2**(-126)  # subnormal
+
+  elif e == 255:
+    if m == 0:
+      return float('-inf') if s else float('inf')
+    else:
+      return float('nan')
+
+  return (-1)**s * (1 + m / 2**23) * 2**(e - 127)
+
 class globalConfiguration:
    sensors = None
    configOpts = None
@@ -452,6 +472,12 @@ def main(mainParms):
                         continue
                      f16Temp = pkt.data[dataStart] * 256 + pkt.data[dataStart+1]
                      d = float_from_unsigned16(f16Temp)
+                  elif dataType == 'float32':
+                     if dataStart+1 >= len(pkt.data):
+                        logger.error("float32 dataStart [%d] exceeds packet length [%d] for sensor [%s]" % (dataStart, len(pkt.data), topic))
+                        continue
+                     f32Temp = pkt.data[dataStart] * 256 * 256 * 256 + pkt.data[dataStart+1] * 256 * 256 + pkt.data[dataStart+2] * 256 + pkt.data[dataStart+3]
+                     d = float_from_unsigned32(f32Temp)
 
                   if sensor['evalFunc'] is not None:
                      try:
