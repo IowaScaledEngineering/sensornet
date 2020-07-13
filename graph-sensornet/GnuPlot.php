@@ -59,6 +59,10 @@ class GnuPlot {
     protected $xtics;
     protected $mxtics;
 
+    // Y tics
+    protected $ytics;
+    protected $mytics;
+
     // Graph title
     protected $title;
 
@@ -200,6 +204,20 @@ class GnuPlot {
         return $this;
     }
 
+    public function setYtics($tics)
+    {
+        $this->ytics = $tics;
+
+        return $this;
+    }
+
+    public function setMytics($tics)
+    {
+        $this->mytics = $tics;
+
+        return $this;
+    }
+
     /**
      * Sets the graph title
      */
@@ -245,6 +263,14 @@ class GnuPlot {
 
         if ($this->mxtics) {
             $this->sendCommand('set mxtics '.$this->mxtics);
+        }
+
+        if ($this->ytics) {
+            $this->sendCommand('set ytics '.$this->ytics);
+        }
+
+        if ($this->mytics) {
+            $this->sendCommand('set mytics '.$this->mytics);
         }
 
         $this->sendCommand('set grid xtics mxtics lt 0, lt 0');

@@ -15,10 +15,13 @@ $sensorName = '';
 $debug = false;
 
 if (key_exists('ymin', $_REQUEST))
-  $ymin = preg_replace('/[^0-9\-]+/', '', $_REQUEST['ymin']);
+  $ymin = preg_replace('/[^0-9\-.]+/', '', $_REQUEST['ymin']);
 
 if (key_exists('ymax', $_REQUEST))
   $ymax = preg_replace('/[^0-9\-.]+/', '', $_REQUEST['ymax']);
+
+if (key_exists('ytics', $_REQUEST))
+  $ytics = preg_replace('/[^0-9\-.]+/', '', $_REQUEST['ytics']);
 
 if (key_exists('hours', $_REQUEST))
   $hours = preg_replace('/[^0-9\-.]+/', '', $_REQUEST['hours']);
@@ -102,6 +105,8 @@ $plot->setMxtics($mxtics);
 
 //$plot->setYRange(32, 100);
 $plot->setYRange($ymin, $ymax);
+if(isset($ytics))
+  $plot->setYtics($ytics);
 
 $deltaHours = sprintf("now +%d minutes", $hours*60/48);
 $dt = new DateTime($deltaHours, new DateTimeZone("UTC"));
