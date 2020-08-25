@@ -29,6 +29,9 @@ if (key_exists('hours', $_REQUEST))
 if (key_exists('showFreezing', $_REQUEST))
   $showFreezing = True;
   
+if (key_exists('showValue', $_REQUEST))
+  $showValue = True;
+  
 if (key_exists('width', $_REQUEST))
   $width = preg_replace('/[^0-9\-]+/', '', $_REQUEST['width']);
   
@@ -42,6 +45,10 @@ if (key_exists('ylabel', $_REQUEST))
 
 if (key_exists('sensorName', $_REQUEST))
   $sensorNames = preg_replace('/[^a-z0-9A-Z_,\/]+/', '', $_REQUEST['sensorName']);
+
+if (key_exists('zoom', $_REQUEST))
+  $zoom = preg_replace('/[^0-9\-.]+/', '', $_REQUEST['zoom']);
+
 
 $sensorArray = explode(',', $sensorNames);
 
@@ -104,6 +111,27 @@ $plot->setXtics($xtics);
 $plot->setMxtics($mxtics);
 
 //$plot->setYRange(32, 100);
+if(isset($zoom))
+{
+  // Auto zoom
+  foreach($sensorArray as $sensorName)
+  {
+    $isTemperature = false;
+    $explodedSensorName = explode('/', $sensorName);
+    
+    if (end($explodedSensorName) == "temperature")
+      $isTemperature = true;
+
+    $url = 'http://localhost:8082/getval/' . $sensorName;
+    if ($isTemperature)
+      $ydata[] = file_get_contents($url) * 1.8 + 32.0;
+    else
+      $ydata[] = file_get_contents($url);
+  }
+  $ymax = max($ydata) + $zoom;
+  $ymin = min($ydata) - $zoom;
+}
+
 $plot->setYRange($ymin, $ymax);
 if(isset($ytics))
   $plot->setYtics($ytics);
@@ -165,8 +193,6 @@ foreach($sensorArray as $sensorName)
     $title .= " [*]";
   }
 
-  $plot->setTitle($arrayIdx, $title);
-
   foreach($jsdata as $datapt)
   {
     $localDT = new DateTime($datapt->time, new DateTimeZone("UTC"));
@@ -183,6 +209,12 @@ foreach($sensorArray as $sensorName)
 
     $plot->push($pointTime, $yval, $arrayIdx);
   }
+
+  if($showValue)
+    $plot->setTitle($arrayIdx, $title . " [" . $yval . "]");
+  else
+    $plot->setTitle($arrayIdx, $title);
+
 }
 
 if (!$debug)
