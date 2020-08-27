@@ -46,6 +46,9 @@ if (key_exists('ylabel', $_REQUEST))
 if (key_exists('sensorName', $_REQUEST))
   $sensorNames = preg_replace('/[^a-z0-9A-Z_,\/]+/', '', $_REQUEST['sensorName']);
 
+if (key_exists('endTime', $_REQUEST))
+  $end = preg_replace('/[^0-9\-.:T]+/', '', $_REQUEST['endTime']);
+
 if (key_exists('zoom', $_REQUEST))
   $zoom = preg_replace('/[^0-9\-.]+/', '', $_REQUEST['zoom']);
 
@@ -110,40 +113,36 @@ $plot->show32($showFreezing);
 $plot->setXtics($xtics);
 $plot->setMxtics($mxtics);
 
-//$plot->setYRange(32, 100);
-if(isset($zoom))
-{
-  // Auto zoom
-  foreach($sensorArray as $sensorName)
-  {
-    $isTemperature = false;
-    $explodedSensorName = explode('/', $sensorName);
-    
-    if (end($explodedSensorName) == "temperature")
-      $isTemperature = true;
-
-    $url = 'http://localhost:8082/getval/' . $sensorName;
-    if ($isTemperature)
-      $ydata[] = file_get_contents($url) * 1.8 + 32.0;
-    else
-      $ydata[] = file_get_contents($url);
-  }
-  $ymax = max($ydata) + $zoom;
-  $ymin = min($ydata) - $zoom;
-}
-
 $plot->setYRange($ymin, $ymax);
 if(isset($ytics))
   $plot->setYtics($ytics);
 
-$deltaHours = sprintf("now +%d minutes", $hours*60/48);
-$dt = new DateTime($deltaHours, new DateTimeZone("UTC"));
+if(isset($end))
+{
+  $deltaHours = $end;
+  $dt = new DateTime($deltaHours);
+  $dt->setTimeZone(new DateTimeZone("UTC"));
+}
+else
+{
+  $deltaHours = sprintf("now +%d minutes", $hours*60/48);
+  $dt = new DateTime($deltaHours, new DateTimeZone("UTC"));
+}
 $endTime = $dt->format(DateTime::ISO8601);
 $dt->setTimezone(new DateTimeZone('America/Denver'));
 $endTimeGnuplot = $dt->format('Y:m:d:H:i:s');
 
-$deltaHours = sprintf("-%d hours", $hours);
-$dt = new DateTime($deltaHours, new DateTimeZone("UTC"));
+if(isset($end))
+{
+  $deltaHours = sprintf("%s -%d hours", $end, $hours);
+  $dt = new DateTime($deltaHours);
+  $dt->setTimeZone(new DateTimeZone("UTC"));
+}
+else
+{
+  $deltaHours = sprintf("-%d hours", $hours);
+  $dt = new DateTime($deltaHours, new DateTimeZone("UTC"));
+}
 $startTime = $dt->format(DateTime::ISO8601);
 $dt->setTimezone(new DateTimeZone('America/Denver'));
 $startTimeGnuplot = $dt->format('Y:m:d:H:i:s');
@@ -157,7 +156,6 @@ foreach($sensorArray as $sensorName)
   $arrayIdx += 1;
 
   $url = 'http://localhost:8082/gethistory/' . $sensorName . '?start='.urlencode($startTime).'&end='.urlencode($endTime);
-
   $data = file_get_contents($url);
   $jsdata = json_decode($data);
 
@@ -210,11 +208,21 @@ foreach($sensorArray as $sensorName)
     $plot->push($pointTime, $yval, $arrayIdx);
   }
 
+  $ydata[] = $yval;  // Store off the last data point for zooming later
+
   if($showValue)
     $plot->setTitle($arrayIdx, $title . " [" . $yval . "]");
   else
     $plot->setTitle($arrayIdx, $title);
 
+}
+
+// Adjust y range if zoom is enabled
+if(isset($zoom))
+{
+  $ymax = max($ydata) + $zoom;
+  $ymin = min($ydata) - $zoom;
+  $plot->setYRange($ymin, $ymax);
 }
 
 if (!$debug)
