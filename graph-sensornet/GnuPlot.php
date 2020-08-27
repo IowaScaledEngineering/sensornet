@@ -307,9 +307,9 @@ class GnuPlot {
             $extras = "";
         
             if($this->show32)
-                $extras = $extras . "32 notitle with lines lc rgbcolor \"#FF0000\", \\\n";
+                $extras = $extras . ",32 notitle with lines lc rgbcolor \"#FF0000\" \\\n";
 
-            $this->sendCommand('plot ' . $extras . $this->getUsings());
+            $this->sendCommand('plot ' . $this->getUsings() . $extras);
         }
         $this->plotted = true;
         $this->sendData();
