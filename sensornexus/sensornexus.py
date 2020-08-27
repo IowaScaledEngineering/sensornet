@@ -148,7 +148,7 @@ class ws_gethistory:
 
     # Get ending date/time
     try:
-      endDT = iso8601.parse_date(args['end']).astimezone(tzinfo=datetime.timezone.utc)
+      endDT = iso8601.parse_date(args['end']).astimezone(tz=datetime.timezone.utc)
       endTime = endDT.timestamp()
     except:
       # Assume now, giving us 1 week of data
