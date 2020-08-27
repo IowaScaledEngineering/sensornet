@@ -209,6 +209,11 @@ class ws_gethistory:
       for entry in sensorStatus.sensorNodeTree[path]['data']:
         # All timestamps, as stored, are in UTC.  Make sure we read it and put UTC as the timezone
         timeDT = datetime.datetime.fromtimestamp(entry['time']).replace(tzinfo=datetime.timezone.utc)
+
+        # Make sure all points are in the time range.  When getting a historical data range, the latest data point can get added to the end.
+        if (timeDT < startDT) or (timeDT > endDT):
+          continue
+
         localTimeDT = timeDT.astimezone(resultsTimezone)
 
         if 'format' in args:
