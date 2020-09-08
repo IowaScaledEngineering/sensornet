@@ -9,6 +9,8 @@ $hours = 168;
 $width = 1000;
 $height = 425;
 $yLabel = 'Temp (F)';
+$showFreezing = false;
+$showValue = false;
 
 $sensorName = '';
 
@@ -27,10 +29,10 @@ if (key_exists('hours', $_REQUEST))
   $hours = preg_replace('/[^0-9\-.]+/', '', $_REQUEST['hours']);
 
 if (key_exists('showFreezing', $_REQUEST))
-  $showFreezing = True;
+  $showFreezing = true;
   
 if (key_exists('showValue', $_REQUEST))
-  $showValue = True;
+  $showValue = true;
   
 if (key_exists('width', $_REQUEST))
   $width = preg_replace('/[^0-9\-]+/', '', $_REQUEST['width']);
@@ -159,7 +161,7 @@ foreach($sensorArray as $sensorName)
   $data = file_get_contents($url);
   $jsdata = json_decode($data);
 
-  if (0 && $debug == true)
+  if ($debug == true)
   {
     print 'url=' . $url . '<br>';
     print '<pre>';
@@ -175,9 +177,22 @@ foreach($sensorArray as $sensorName)
     $isTemperature = true;
 
   $sensorPath = implode("/", array_slice($explodedSensorName, 0, -1));
-  if($sensorPrettyNames[$sensorPath])
+  if(array_key_exists($sensorPath, $sensorPrettyNames))
   {
-    $title = $sensorPrettyNames[$sensorPath];
+    $sensorType = end($explodedSensorName);
+    switch($sensorType)
+    {
+      case "temperature":
+        $sensorType = "Temperature";
+        break;
+      case "humidity":
+        $sensorType = "Humidity";
+        break;
+      case "batteryVoltage":
+        $sensorType = "Battery Voltage";
+        break;
+    }
+    $title = $sensorPrettyNames[$sensorPath] . " " . $sensorType;
   }
   else 
   {
