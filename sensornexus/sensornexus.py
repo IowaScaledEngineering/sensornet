@@ -171,36 +171,7 @@ class ws_gethistory:
     except:
       minIncrement = 1
       
-    # Is this sensor in the database for our date range?  Try there first
-    webDB = None
-    if webdbConnectData['mysqlServer'] is not None and webdbConnectData['mysqlReadOnlyUsername'] is not None and webdbConnectData['mysqlReadOnlyPassword'] is not None:
-      try:
-        webDB = mysqldb(webdbConnectData['mysqlServer'], webdbConnectData['mysqlPort'], webdbConnectData['mysqlReadOnlyUsername'], webdbConnectData['mysqlReadOnlyPassword'], webdbConnectData['mysqlDatabaseName'], logger)
-        
-        if not webDB.conn.is_connected():
-          raise InterfaceError
-
-        cursor = webDB.conn.cursor()
-        query = "SELECT DATE_FORMAT(d.timestamp, '%Y-%m-%dT%TZ'), d.value FROM SensorData AS d INNER JOIN SensorNames AS n ON (d.nameID=n.nameID) WHERE n.sensorName=%s AND d.timestamp >= %s and d.timestamp <= %s ORDER BY d.timestamp"
-        cursor.execute(query, (path, startDT.strftime("%Y-%m-%d %H:%M:%S.%f"), endDT.strftime("%Y-%m-%d %H:%M:%S.%f")))
-        for (timestamp,value) in cursor:
-          # all DB in UTC
-          try:
-            timeDT = iso8601.parse_date(timestamp).replace(tzinfo=datetime.timezone.utc)
-            localTimeDT = timeDT.astimezone(resultsTimezone)
-            element = {'time':localTimeDT.isoformat(), 'value':value}
-            outputlist.append(element)
-              
-          except Exception as e:
-            logger.exception("Database record [%s]=>[%s] failed\n" % (timestamp, value))
-        cursor.close()
-      except Exception as e:
-        logger.exception("Failed DB connection")
-      finally:
-        try:
-          webDB.conn.close()
-        except:
-          pass
+    allDataInMemory = False;
 
     SensorStatus.sensorStatus.lock.acquire()
     sensorStatus = SensorStatus.sensorStatus
@@ -211,7 +182,10 @@ class ws_gethistory:
         timeDT = datetime.datetime.fromtimestamp(entry['time']).replace(tzinfo=datetime.timezone.utc)
 
         # Make sure all points are in the time range.  When getting a historical data range, the latest data point can get added to the end.
-        if (timeDT < startDT) or (timeDT > endDT):
+        if (timeDT < startDT):
+          allDataInMemory = True
+          continue
+        if (timeDT > endDT):
           continue
 
         localTimeDT = timeDT.astimezone(resultsTimezone)
@@ -226,6 +200,38 @@ class ws_gethistory:
         outputlist.append(element)
 
     SensorStatus.sensorStatus.lock.release()
+
+    # Is this sensor in the database for our date range?  Try there first
+    if not allDataInMemory:
+      webDB = None
+      if webdbConnectData['mysqlServer'] is not None and webdbConnectData['mysqlReadOnlyUsername'] is not None and webdbConnectData['mysqlReadOnlyPassword'] is not None:
+        try:
+          webDB = mysqldb(webdbConnectData['mysqlServer'], webdbConnectData['mysqlPort'], webdbConnectData['mysqlReadOnlyUsername'], webdbConnectData['mysqlReadOnlyPassword'], webdbConnectData['mysqlDatabaseName'], logger)
+          
+          if not webDB.conn.is_connected():
+            raise InterfaceError
+
+          cursor = webDB.conn.cursor()
+          query = "SELECT DATE_FORMAT(d.timestamp, '%Y-%m-%dT%TZ'), d.value FROM SensorData AS d INNER JOIN SensorNames AS n ON (d.nameID=n.nameID) WHERE n.sensorName=%s AND d.timestamp >= %s and d.timestamp <= %s ORDER BY d.timestamp"
+          cursor.execute(query, (path, startDT.strftime("%Y-%m-%d %H:%M:%S.%f"), endDT.strftime("%Y-%m-%d %H:%M:%S.%f")))
+          for (timestamp,value) in cursor:
+            # all DB in UTC
+            try:
+              timeDT = iso8601.parse_date(timestamp).replace(tzinfo=datetime.timezone.utc)
+              localTimeDT = timeDT.astimezone(resultsTimezone)
+              element = {'time':localTimeDT.isoformat(), 'value':value}
+              outputlist.append(element)
+                
+            except Exception as e:
+              logger.exception("Database record [%s]=>[%s] failed\n" % (timestamp, value))
+          cursor.close()
+        except Exception as e:
+          logger.exception("Failed DB connection")
+        finally:
+          try:
+            webDB.conn.close()
+          except:
+            pass
 
     outputlist.sort(key = self.sortByDatetime)
 
