@@ -35,6 +35,8 @@ import struct
 from simpleeval import simple_eval
 import datetime
 import pickle
+import TimedCompressedRotatingFileHandler
+
 
 try:
   import web
@@ -340,7 +342,11 @@ class GlobalConfiguration:
   def setupLogger(self, logFile, consoleLogLevel, fileLogLevel):
     self.logger = logging.getLogger('main')
     self.logger.setLevel(logging.DEBUG)
-    fh = logging.FileHandler(self.configOpts['logFile'])
+    #fh = logging.FileHandler(self.configOpts['logFile'])
+
+    #print("File logging started - file=[%s], backupCount=[%d] interval=[%d]\n" % (self.configOpts['logFile'], self.configOpts['logArchiveCount'], self.configOpts['logRotateInterval']))
+    fh = TimedCompressedRotatingFileHandler.TimedCompressedRotatingFileHandler(self.configOpts['logFile'], backupCount = int(self.configOpts['logArchiveCount']), when='M', interval=int(self.configOpts['logRotateInterval']))
+
     fh.setLevel(self.logLevelToVal(fileLogLevel, logging.DEBUG))
       
     ch = logging.StreamHandler()
@@ -379,6 +385,9 @@ class GlobalConfiguration:
 
     self.configOpts['consoleLogLevel'] = self.parserGetWithDefault(parser, "global", "consoleLogLevel", "error").lower()
     self.configOpts['fileLogLevel'] = self.parserGetWithDefault(parser, "global", "fileLogLevel", "debug").lower()
+    self.configOpts['logArchiveCount'] = self.parserGetIntWithDefault(parser, "global", "fileLogArchivesCount", 3)
+    self.configOpts['logRotateInterval'] = self.parserGetIntWithDefault(parser, "global", "fileLogRotateMinutes", 60*24*7)
+    
     self.setupLogger(self.configOpts['logFile'], self.configOpts['consoleLogLevel'], self.configOpts['fileLogLevel'])
 
     self.logger.info("---------------------------------------------------------------------------")

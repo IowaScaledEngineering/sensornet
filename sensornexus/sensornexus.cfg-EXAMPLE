@@ -6,6 +6,13 @@ mqttReconnectInterval = 10
 defaultTimezone = America/Denver
 sensorDataFile = sensordata.pickle
 
+# Logging Configuration
+fileLogLevel = debug
+fileLogArchivesCount = 3
+fileLogRotateMinutes = 10080    # 1 Week
+
+
+
 # This user must have read/write access to post updates
 mysqlUsername = sensornet
 mysqlPassword = 8Dgx4gJ9xuc5f2gs
