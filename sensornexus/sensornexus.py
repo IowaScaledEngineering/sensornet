@@ -294,7 +294,7 @@ def mqtt_onConnect(client, userdata, flags, rc):
     logger.error("ERROR: MQTT Other Failure %d" % (rc))
     client.connected_flag = False
   
-  mqttClient.subscribe("#", qos=1)
+  client.subscribe("#", qos=1)
 
 def mqtt_onDisconnect(client, userdata, rc):
   logger = userdata['logger']
