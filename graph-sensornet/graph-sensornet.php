@@ -12,6 +12,8 @@ $yLabel = 'Temp (F)';
 $showFreezing = false;
 $showValue = false;
 
+$increment = 0;
+
 $sensorName = '';
 
 $debug = false;
@@ -54,6 +56,10 @@ if (key_exists('endTime', $_REQUEST))
 if (key_exists('zoom', $_REQUEST))
   $zoom = preg_replace('/[^0-9\-.]+/', '', $_REQUEST['zoom']);
 
+
+if (key_exists('increment', $_REQUEST))
+  $increment = preg_replace('/[^0-9\-]+/', '', $_REQUEST['increment']);
+  
 
 $sensorArray = explode(',', $sensorNames);
 
@@ -157,16 +163,16 @@ foreach($sensorArray as $sensorName)
 {
   $arrayIdx += 1;
 
-  $url = 'http://localhost:8082/gethistory/' . $sensorName . '?start='.urlencode($startTime).'&end='.urlencode($endTime);
+  $url = 'http://localhost:8082/gethistory/' . $sensorName . '?start='.urlencode($startTime).'&end='.urlencode($endTime).'&increment='.urlencode($increment);
   $data = file_get_contents($url);
   $jsdata = json_decode($data);
 
   if ($debug == true)
   {
     print 'url=' . $url . '<br>';
-    print '<pre>';
-    print_r($jsdata);
-    print '</pre>';
+//    print '<pre>';
+//    print_r($jsdata);
+//    print '</pre>';
   }
 
 
