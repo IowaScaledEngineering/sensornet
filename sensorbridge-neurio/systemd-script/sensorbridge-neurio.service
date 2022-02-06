@@ -13,7 +13,7 @@ Environment="PYDIR=/home/ndholmes/data/projects/sensornet/sensorbridge-neurio/"
 Environment="PIDFILE=/tmp/sensorbridge-neurio.pid"
 Environment="CONF=/home/ndholmes/data/projects/sensornet/sensorbridge-neurio/sensorbridge-neurio.cfg"
 
-PIDFile=${PIDFILE}
+PIDFile=/tmp/sensorbridge-neurio.pid
 ExecStart=/usr/bin/env python3 ${PYDIR}/sensorbridge-neurio.py --daemon start --pidfile ${PIDFILE} --config ${CONF}
 ExecReload=/usr/bin/env python3 ${PYDIR}/sensorbridge-neurio.py --daemon restart --pidfile ${PIDFILE} --config ${CONF}
 ExecStop=/usr/bin/env python3 ${PYDIR}/sensorbridge-neurio[A.py --daemon stop --pidfile ${PIDFILE} --config ${CONF}
